@@ -9,6 +9,12 @@ namespace CairnVR.Controls;
 // game's normal Gamepad layout. A hardware gamepad takes precedence while it is being used.
 internal sealed class GamepadBridge
 {
+    const string LayoutName = "CairnVRGamepad";
+    const string LayoutJson = "{\"extend\":\"Gamepad\",\"runInBackground\":\"enabled\"}";
+    bool registeredLayout;
+    bool useDefaultLayout;
+    InputSettings adjustedSettings;
+    InputSettings.BackgroundBehavior previousBackgroundBehavior;
     Gamepad output;
     GamepadState previous;
     bool submitted;
@@ -17,6 +23,13 @@ internal sealed class GamepadBridge
 
     public unsafe void Apply(Sample sample, Vector2? motion)
     {
+        var settings = InputSystem.settings;
+        if (settings.backgroundBehavior == InputSettings.BackgroundBehavior.ResetAndDisableAllDevices)
+        {
+            adjustedSettings = settings;
+            previousBackgroundBehavior = settings.backgroundBehavior;
+            settings.backgroundBehavior = InputSettings.BackgroundBehavior.ResetAndDisableNonBackgroundDevices;
+        }
         GamepadState state = new()
         {
             buttons = sample.Buttons,
@@ -52,7 +65,7 @@ internal sealed class GamepadBridge
         {
             if (state.buttons == 0 && state.leftStick.sqrMagnitude < .0001f && state.rightStick.sqrMagnitude < .0001f
                 && state.leftTrigger < .01f && state.rightTrigger < .01f) return;
-            output = InputSystem.AddDevice("Gamepad", "CairnVRGamepad", null).Cast<Gamepad>();
+            output = CreateGamepad();
         }
         if (submitted && Same(state, previous)) return;
         // This non-generic event path also works when IL2CPP strips QueueStateEvent<GamepadState>.
@@ -65,12 +78,37 @@ internal sealed class GamepadBridge
             if (!loggedBridge)
             {
                 ControlsPlugin.Logger.LogInfo("Delivered the first XR controller event to CAIRN's gamepad input.");
+                ControlsPlugin.Logger.LogInfo($"XR gamepad background capability={output.canRunInBackground}, game's input background behavior={InputSystem.settings.backgroundBehavior}, desktop focus={Application.isFocused}.");
                 loggedBridge = true;
             }
             previous = state;
             submitted = true;
         }
         finally { buffer.Dispose(); }
+    }
+
+    Gamepad CreateGamepad()
+    {
+        if (!useDefaultLayout)
+        {
+            try
+            {
+                if (!registeredLayout)
+                {
+                    // IL2CPP requires a boxed nullable with HasValue=false for the optional matcher.
+                    var noMatcher = new Il2CppSystem.Nullable<UnityEngine.InputSystem.Layouts.InputDeviceMatcher>();
+                    InputSystem.RegisterLayout(LayoutJson, LayoutName, noMatcher);
+                    registeredLayout = true;
+                }
+                return InputSystem.AddDevice(LayoutName, LayoutName, null).Cast<Gamepad>();
+            }
+            catch (System.Exception error)
+            {
+                ControlsPlugin.Logger.LogWarning($"Using the standard gamepad layout. Background input unavailable: {error.Message}");
+                useDefaultLayout = true;
+            }
+        }
+        return InputSystem.AddDevice("Gamepad", LayoutName, null).Cast<Gamepad>();
     }
     static bool Same(GamepadState a, GamepadState b) => a.buttons == b.buttons && a.leftStick == b.leftStick &&
         a.rightStick == b.rightStick && Mathf.Approximately(a.leftTrigger, b.leftTrigger) && Mathf.Approximately(a.rightTrigger, b.rightTrigger);
@@ -92,5 +130,15 @@ internal sealed class GamepadBridge
         if (output != null) InputSystem.RemoveDevice(output);
         output = null;
         submitted = false;
+    }
+
+    public void Dispose()
+    {
+        Clear();
+        if (registeredLayout) InputSystem.RemoveLayout(LayoutName);
+        registeredLayout = false;
+        if (adjustedSettings && adjustedSettings.backgroundBehavior == InputSettings.BackgroundBehavior.ResetAndDisableNonBackgroundDevices)
+            adjustedSettings.backgroundBehavior = previousBackgroundBehavior;
+        adjustedSettings = null;
     }
 }

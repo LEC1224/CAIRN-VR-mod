@@ -14,6 +14,7 @@ public sealed class ControlsPlugin : BasePlugin
     internal static RecenterControl Recenter;
     internal static bool Gaze, Reach, Markers, Point;
     internal static float MotionRange;
+    internal static bool PreviouslyRanInBackground;
     internal static BepInEx.Logging.ManualLogSource Logger = null!;
     public override void Load()
     {
@@ -30,6 +31,8 @@ public sealed class ControlsPlugin : BasePlugin
         var path = Path.Combine(Path.GetDirectoryName(GetType().Assembly.Location)!, "openxr", "CairnTracking.dll");
         Tracking.Initialize(path);
         AddComponent<ClimbingControls>();
+        PreviouslyRanInBackground = Application.runInBackground;
+        Application.runInBackground = true;
         Log.LogInfo($"Gamepad bridge ready. Gaze={Gaze}, reach={Reach}, route markers={Markers}, pointed reach={Point}.");
     }
     static bool Enabled(string key) => Environment.GetEnvironmentVariable("CAIRNVR_" + key) == "1";
