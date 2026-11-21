@@ -9,6 +9,7 @@
 #include <openxr/openxr_platform.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -38,7 +39,8 @@ XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 std::array<XrView,2> views{};
 std::array<Eye,2> eyes{};
 ComPtr<ID3D11DeviceContext> context;
-bool running{}, frameOpen{}, queued{};
+bool running{}, frameOpen{}, queued{}, queuedDraw{};
+std::atomic<uint32_t> submitted{}, skipped{};
 uint32_t eventId{};
 
 void check(XrResult result,const char* call) {
@@ -67,9 +69,12 @@ void endFrame(bool draw) {
     info.layers=draw?&layer:nullptr;
     frameOpen=false;
     check(xrEndFrame(session,&info),"xrEndFrame");
+    if(draw) ++submitted; else ++skipped;
 }
 void closeSession() {
-    if(frameOpen) { try { endFrame(false); } catch (...) {} }
+    // Destruction cancels any open frame. Calling xrEndFrame here would run
+    // SteamVR's D3D work on the main thread during error recovery or quit.
+    frameOpen=false;
     for(auto& eye:eyes) {
         if(eye.chain) xrDestroySwapchain(eye.chain);
         eye=Eye{};
@@ -78,7 +83,7 @@ void closeSession() {
     if(session) xrDestroySession(session);
     if(instance) xrDestroyInstance(instance);
     space=XR_NULL_HANDLE; session=XR_NULL_HANDLE; instance=XR_NULL_HANDLE;
-    running=false; queued=false; context.Reset();
+    running=false; queued=false; queuedDraw=false; context.Reset();
     ++eventId;
 }
 void copyEye(Eye& eye) {
@@ -89,6 +94,7 @@ void copyEye(Eye& eye) {
     wait.timeout=XR_INFINITE_DURATION;
     check(xrWaitSwapchainImage(eye.chain,&wait),"xrWaitSwapchainImage");
     context->CopyResource(eye.images.at(index).texture,eye.source.Get());
+    context->Flush();
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     check(xrReleaseSwapchainImage(eye.chain,&release),"xrReleaseSwapchainImage");
 }
@@ -97,8 +103,8 @@ void __stdcall submit(int token) {
     if(!queued || static_cast<uint32_t>(token)!=eventId) return;
     queued=false;
     try {
-        for(auto& eye:eyes) copyEye(eye);
-        endFrame(true);
+        if(queuedDraw) for(auto& eye:eyes) copyEye(eye);
+        endFrame(queuedDraw);
     } catch(const std::exception& ex) {
         error=ex.what();
         closeSession();
@@ -187,38 +193,43 @@ API int vr_open(ID3D11Texture2D* texture,float scale,Display* display) {
             e.images.resize(n,{XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
             check(xrEnumerateSwapchainImages(e.chain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(e.images.data())),"enumerate eye textures");
         }
+        submitted=0; skipped=0;
         error.clear(); return 1;
     } catch(const std::exception& ex) {error=ex.what();closeSession();return 0;}
 }
 API int vr_frame(Tracking* out) {
-    std::lock_guard guard(gate);
+    // SteamVR may take time to finish GPU work in the render callback.
+    // Unity's main thread must stay available to pump messages and graphics jobs.
+    std::unique_lock guard(gate,std::try_to_lock);
+    if(!guard.owns_lock()) return 0;
     if(!session) return -1;
     if(queued || frameOpen) return 0;
     try {
         poll(); if(!running) return 0;
         XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO}; check(xrWaitFrame(session,&wi,&frame),"xrWaitFrame");
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO}; check(xrBeginFrame(session,&bi),"xrBeginFrame"); frameOpen=true;
-        if(!frame.shouldRender) {endFrame(false);return 0;}
+        if(!frame.shouldRender) return 2;
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
         locate.space=space; locate.displayTime=frame.predictedDisplayTime; locate.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         XrViewState state{XR_TYPE_VIEW_STATE}; uint32_t count=0;
         for(auto& v:views) v.type=XR_TYPE_VIEW;
         check(xrLocateViews(session,&locate,&state,2,&count,views.data()),"xrLocateViews");
         const XrViewStateFlags valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
-        if(count!=2 || (state.viewStateFlags & valid) != valid) {endFrame(false);return 0;}
+        if(count!=2 || (state.viewStateFlags & valid) != valid) return 2;
         for(int i=0;i<2;++i) out[i]={views[i].pose,views[i].fov};
         return 1;
     } catch(const std::exception& ex) {error=ex.what();closeSession();return -1;}
 }
 API int vr_queue(ID3D11Texture2D* left,ID3D11Texture2D* right) {
     std::lock_guard guard(gate);
-    if(!frameOpen || !left || !right) return -1;
-    eyes[0].source=left; eyes[1].source=right;
+    if(!frameOpen || queued || ((left==nullptr)!=(right==nullptr))) return -1;
+    queuedDraw=left!=nullptr;
+    if(queuedDraw) {eyes[0].source=left; eyes[1].source=right;}
     queued=true;
     return static_cast<int>(++eventId);
 }
 API void* vr_submit_event() {return reinterpret_cast<void*>(&submit);}
-API void vr_abort() { std::lock_guard guard(gate); if (!queued && frameOpen) {try {endFrame(false);}catch(const std::exception& ex){error=ex.what();closeSession();}} }
+API void vr_counts(uint32_t* drawn,uint32_t* empty) { *drawn=submitted.load(); *empty=skipped.load(); }
 API void vr_close() { std::lock_guard guard(gate); closeSession(); }
 API void vr_error(char* dest,int size) { std::lock_guard guard(gate); if(size>0) strncpy_s(dest,size,error.c_str(),_TRUNCATE); }
 

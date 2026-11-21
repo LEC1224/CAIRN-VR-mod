@@ -55,7 +55,7 @@ internal static class Native
     [DllImport(Dll)] internal static extern int vr_frame([Out] Tracking[] views);
     [DllImport(Dll)] internal static extern int vr_queue(IntPtr left, IntPtr right);
     [DllImport(Dll)] internal static extern IntPtr vr_submit_event();
-    [DllImport(Dll)] internal static extern void vr_abort();
+    [DllImport(Dll)] internal static extern void vr_counts(out uint drawn, out uint empty);
     [DllImport(Dll)] internal static extern void vr_close();
     [DllImport(Dll, CharSet=CharSet.Ansi)] private static extern void vr_error(StringBuilder error, int size);
     internal static string Error() { var value = new StringBuilder(512); vr_error(value, value.Capacity); return value.ToString(); }
@@ -74,6 +74,7 @@ public sealed class StereoView : MonoBehaviour
     private Transform origin;
     private IntPtr submit;
     private float nextAttempt, nextLookup, blinkUntil, lastFrame, focusElevation, stickHeldSince = -1;
+    private float nextFrameReport;
     private int collisionLayers = Physics.DefaultRaycastLayers;
     private Material fadeMaterial;
     private Transform adjustedListener;
@@ -105,26 +106,31 @@ public sealed class StereoView : MonoBehaviour
         try
         {
             if (!opened && !Open()) return;
+            if (Time.realtimeSinceStartup >= nextFrameReport)
+            {
+                Native.vr_counts(out var drawn, out var empty);
+                CameraPlugin.Logger.LogInfo($"OpenXR frames accepted by the runtime: {drawn} stereo, {empty} empty.");
+                nextFrameReport = Time.realtimeSinceStartup + 60f;
+            }
             var result = Native.vr_frame(tracking);
             if (result < 0) throw new InvalidOperationException(Native.Error());
             if (result == 0) return;
-            try
+            if (result == 2)
             {
-                var source = Camera.main;
-                if (!source || !source.enabled) source = FindSceneCamera();
-                var fade = UpdateTracking(source);
-                for (var i = 0; i < eyes.Length; i++) RenderEye(i, source, fade);
-                int token = Native.vr_queue(textures[0], textures[1]);
-                if (token < 0) throw new InvalidOperationException("The stereo frame could not be queued.");
-                GL.IssuePluginEvent(submit, token);
-                lastFrame = Time.realtimeSinceStartup;
-                if (!reportedFrame)
-                {
-                    CameraPlugin.Logger.LogInfo($"Stereo frame queued. Source camera: {(source ? source.name : "UI only")}.");
-                    reportedFrame = true;
-                }
+                QueueFrame(IntPtr.Zero, IntPtr.Zero);
+                return;
             }
-            catch { Native.vr_abort(); throw; }
+            var source = Camera.main;
+            if (!source || !source.enabled) source = FindSceneCamera();
+            var fade = UpdateTracking(source);
+            for (var i = 0; i < eyes.Length; i++) RenderEye(i, source, fade);
+            QueueFrame(textures[0], textures[1]);
+            lastFrame = Time.realtimeSinceStartup;
+            if (!reportedFrame)
+            {
+                CameraPlugin.Logger.LogInfo($"Stereo frame queued. Source camera: {(source ? source.name : "UI only")}.");
+                reportedFrame = true;
+            }
         }
         catch (Exception ex)
         {
@@ -132,6 +138,13 @@ public sealed class StereoView : MonoBehaviour
             Close();
             nextAttempt = Time.realtimeSinceStartup + 3;
         }
+    }
+
+    private void QueueFrame(IntPtr left, IntPtr right)
+    {
+        int token = Native.vr_queue(left, right);
+        if (token < 0) throw new InvalidOperationException("The OpenXR frame could not be queued.");
+        GL.IssuePluginEvent(submit, token);
     }
 
     private Camera FindSceneCamera()
@@ -159,6 +172,7 @@ public sealed class StereoView : MonoBehaviour
             return false;
         }
         opened = true;
+        nextFrameReport = Time.realtimeSinceStartup + 8f;
         submit = Native.vr_submit_event();
         origin = new GameObject("CairnVR.TrackingOrigin").transform;
         Object.DontDestroyOnLoad(origin.gameObject);
