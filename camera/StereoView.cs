@@ -30,10 +30,11 @@ public sealed class CameraPlugin : BasePlugin
         LookAssist = Config.Bind("Comfort", "KeepClimberInView", true, "Gently follow steep camera aim so the climber stays in view. Turning this off keeps neutral pitch level.");
         StickRecenter = Config.Bind("Comfort", "GamepadRecenter", true, "Hold both thumbstick clicks for 0.8 seconds to recenter the headset.");
         FollowAudio = Config.Bind("Audio", "HeadOrientation", true, "Orient the game's spatial listener with the headset when it has its own transform.");
-        FlipY = Config.Bind("Display", "FlipEyeTextures", true, "Flip Unity's offscreen projection for direct D3D11 texture submission.");
+        FlipY = Config.Bind("Display", "FlipEyeTextures", true, "Vertically flip the completed eye image for D3D11 submission.");
         BinaryDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
         NativeLibrary.Load(Path.Combine(BinaryDirectory, "openxr_loader.dll"));
         NativeLibrary.Load(Path.Combine(BinaryDirectory, "CairnVRStereo.dll"));
+        EyeLighting.Install();
         AddComponent<StereoView>();
         Log.LogInfo("CAIRN VR camera loaded. Waiting for the local OpenXR runtime.");
     }
@@ -72,6 +73,7 @@ public sealed class StereoView : MonoBehaviour
     private static bool recenterRequested;
     private readonly Camera[] eyes = new Camera[2];
     private readonly RenderTexture[] images = new RenderTexture[2];
+    private readonly RenderTexture[] submissions = new RenderTexture[2];
     private readonly IntPtr[] textures = new IntPtr[2];
     private readonly Native.Tracking[] tracking = new Native.Tracking[2];
     private Transform origin;
@@ -196,7 +198,14 @@ public sealed class StereoView : MonoBehaviour
         submit = Native.vr_submit_event();
         origin = new GameObject("CairnVR.TrackingOrigin").transform;
         Object.DontDestroyOnLoad(origin.gameObject);
-        var format = display.format switch { 29 => GraphicsFormat.R8G8B8A8_SRGB, 87 => GraphicsFormat.B8G8R8A8_UNorm, 91 => GraphicsFormat.B8G8R8A8_SRGB, _ => GraphicsFormat.R8G8B8A8_UNorm };
+        bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+        var format = display.format switch
+        {
+            29 when linear => GraphicsFormat.R8G8B8A8_SRGB,
+            91 when linear => GraphicsFormat.B8G8R8A8_SRGB,
+            87 or 91 => GraphicsFormat.B8G8R8A8_UNorm,
+            _ => GraphicsFormat.R8G8B8A8_UNorm
+        };
         for (var i = 0; i < 2; i++)
         {
             var go = new GameObject(i == 0 ? "CairnVR.LeftEye" : "CairnVR.RightEye");
@@ -204,8 +213,14 @@ public sealed class StereoView : MonoBehaviour
             eyes[i] = go.AddComponent<Camera>();
             eyes[i].enabled = false;
             images[i] = new RenderTexture(i == 0 ? display.leftWidth : display.rightWidth, i == 0 ? display.leftHeight : display.rightHeight, 24, format);
+            images[i].hideFlags = HideFlags.DontUnloadUnusedAsset;
             if (!images[i].Create()) throw new InvalidOperationException("Unity could not allocate the OpenXR eye texture.");
-            textures[i] = images[i].GetNativeTexturePtr();
+            submissions[i] = new RenderTexture(images[i].width, images[i].height, 0, format);
+            // The transfer surfaces are referenced only by this plugin and native
+            // D3D, so Unity's scene-load cleanup otherwise reclaims them mid-frame.
+            submissions[i].hideFlags = HideFlags.DontUnloadUnusedAsset;
+            if (!submissions[i].Create()) throw new InvalidOperationException("Unity could not allocate the submitted eye texture.");
+            textures[i] = submissions[i].GetNativeTexturePtr();
         }
         previousError = null;
         CameraPlugin.Logger.LogInfo($"OpenXR stereo session created, left eye {display.leftWidth}x{display.leftHeight}, right eye {display.rightWidth}x{display.rightHeight}.");
@@ -359,27 +374,30 @@ public sealed class StereoView : MonoBehaviour
         eye.ResetWorldToCameraMatrix();
         eye.ResetCullingMatrix();
         var near = eye.nearClipPlane;
-        var p = Matrix4x4.Frustum(Mathf.Tan(view.left)*near, Mathf.Tan(view.right)*near, Mathf.Tan(view.down)*near, Mathf.Tan(view.up)*near, near, eye.farClipPlane);
-        bool flip = CameraPlugin.FlipY.Value;
-        eye.projectionMatrix = flip ? Matrix4x4.Scale(new Vector3(1,-1,1)) * p : p;
-        bool oldCulling = GL.invertCulling;
+        eye.projectionMatrix = Matrix4x4.Frustum(Mathf.Tan(view.left)*near, Mathf.Tan(view.right)*near, Mathf.Tan(view.down)*near, Mathf.Tan(view.up)*near, near, eye.farClipPlane);
         var oldTarget = RenderTexture.active;
+        var oldSrgb = GL.sRGBWrite;
         try
         {
             if (fade >= .999f)
             {
-                RenderTexture.active = images[index];
+                RenderTexture.active = submissions[index];
                 GL.Clear(true,true,Color.black);
                 return;
             }
             BeforeEyeRender?.Invoke(eye);
-            GL.invertCulling = flip != oldCulling;
-            eye.Render();
-            GL.invertCulling = oldCulling;
+            EyeLighting.Render(eye, source);
             AfterEyeRender?.Invoke(eye);
             if (fade > .001f) DrawFade(images[index], fade);
+            // Lighting, depth reconstruction, culling and the UI all see the
+            // optical projection. Only the final OpenXR image changes orientation.
+            GL.sRGBWrite = submissions[index].sRGB;
+            if (CameraPlugin.FlipY.Value)
+                Graphics.Blit(images[index], submissions[index], new Vector2(1, -1), new Vector2(0, 1));
+            else
+                Graphics.Blit(images[index], submissions[index]);
         }
-        finally { GL.invertCulling = oldCulling; RenderTexture.active = oldTarget; }
+        finally { GL.sRGBWrite = oldSrgb; RenderTexture.active = oldTarget; }
     }
 
     private void DrawFade(RenderTexture target, float opacity)
@@ -422,6 +440,7 @@ public sealed class StereoView : MonoBehaviour
         opened = false; centered = false; hasAnchor = false; wasFalling = false; reportedFrame = false;
         if (origin) Object.Destroy(origin.gameObject);
         foreach (var image in images) if (image) { image.Release(); Object.Destroy(image); }
+        foreach (var image in submissions) if (image) { image.Release(); Object.Destroy(image); }
     }
 }
 
