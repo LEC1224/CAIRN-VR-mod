@@ -1,0 +1,96 @@
+using Unity.Collections;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
+
+namespace CairnVR.Controls;
+
+// XR action bindings may put Frame in tracked-controller mode. Mirror those controls into the
+// game's normal Gamepad layout. A hardware gamepad takes precedence while it is being used.
+internal sealed class GamepadBridge
+{
+    Gamepad output;
+    GamepadState previous;
+    bool submitted;
+    bool loggedBridge;
+    float physicalLastUsed = -100;
+
+    public unsafe void Apply(Sample sample, Vector2? motion)
+    {
+        GamepadState state = new()
+        {
+            buttons = sample.Buttons,
+            leftStick = new(sample.LX, sample.LY),
+            rightStick = new(sample.RX, sample.RY),
+            leftTrigger = sample.LT,
+            rightTrigger = sample.RT
+        };
+        var pads = Gamepad.all;
+        Gamepad physical = null;
+        for (int p = 0; p < pads.Count; p++)
+        {
+            var candidate = pads[p];
+            if (output != null && candidate.deviceId == output.deviceId) continue;
+            var raw = ReadPhysical(candidate);
+            if (raw.buttons != 0 || raw.leftStick.sqrMagnitude > .04f || raw.rightStick.sqrMagnitude > .04f
+                || raw.leftTrigger > .08f || raw.rightTrigger > .08f)
+            {
+                physicalLastUsed = Time.unscaledTime;
+                physical = candidate;
+                if (motion.HasValue) state = raw;
+                break;
+            }
+        }
+        if (motion.HasValue) state.leftStick = motion.Value;
+        else if ((sample.Valid & 8) == 0 || physical != null || Time.unscaledTime - physicalLastUsed < .2f)
+        {
+            Clear();
+            return;
+        }
+
+        if (output == null)
+        {
+            if (state.buttons == 0 && state.leftStick.sqrMagnitude < .0001f && state.rightStick.sqrMagnitude < .0001f
+                && state.leftTrigger < .01f && state.rightTrigger < .01f) return;
+            output = InputSystem.AddDevice("Gamepad", "CairnVRGamepad", null).Cast<Gamepad>();
+        }
+        if (submitted && Same(state, previous)) return;
+        // This non-generic event path also works when IL2CPP strips QueueStateEvent<GamepadState>.
+        var buffer = StateEvent.From(output, out var eventPtr, Allocator.Temp);
+        try
+        {
+            var stateEvent = StateEvent.From(eventPtr);
+            *(GamepadState*)stateEvent->state = state;
+            InputSystem.QueueEvent(eventPtr);
+            if (!loggedBridge)
+            {
+                ControlsPlugin.Logger.LogInfo("Delivered the first XR controller event to CAIRN's gamepad input.");
+                loggedBridge = true;
+            }
+            previous = state;
+            submitted = true;
+        }
+        finally { buffer.Dispose(); }
+    }
+    static bool Same(GamepadState a, GamepadState b) => a.buttons == b.buttons && a.leftStick == b.leftStick &&
+        a.rightStick == b.rightStick && Mathf.Approximately(a.leftTrigger, b.leftTrigger) && Mathf.Approximately(a.rightTrigger, b.rightTrigger);
+
+    static GamepadState ReadPhysical(Gamepad pad)
+    {
+        GamepadState state = new()
+        {
+            leftStick = pad.leftStick.ReadValue(),
+            rightStick = pad.rightStick.ReadValue(),
+            leftTrigger = pad.leftTrigger.ReadValue(),
+            rightTrigger = pad.rightTrigger.ReadValue()
+        };
+        for (int i = 0; i < 14; i++) if (pad[(GamepadButton)i].isPressed) state.buttons |= 1u << i;
+        return state;
+    }
+    public void Clear()
+    {
+        if (output != null) InputSystem.RemoveDevice(output);
+        output = null;
+        submitted = false;
+    }
+}

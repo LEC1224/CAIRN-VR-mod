@@ -1,0 +1,10 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_CAIRN_controls",
+    "library_path": ".\\CairnTracking.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "CAIRN optional gaze and tracked controller actions"
+  }
+}
