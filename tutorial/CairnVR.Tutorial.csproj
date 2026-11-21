@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GameDir Condition="'$(GameDir)' == ''">$(MSBuildProgramFiles32)\Steam\steamapps\common\Cairn</GameDir>
+    <Core>$(GameDir)\BepInEx\core</Core>
+    <Interop>$(GameDir)\BepInEx\interop</Interop>
+    <ControlsDll Condition="'$(ControlsDll)' == ''">$(MSBuildThisFileDirectory)..\.work\controls\package\BepInEx\plugins\CairnVR\CairnVR.Controls.dll</ControlsDll>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(ControlsDll);$(Core)\BepInEx.Core.dll;$(Core)\BepInEx.Unity.IL2CPP.dll;$(Core)\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(Interop)\Il2Cppmscorlib.dll;$(Interop)\UnityEngine.CoreModule.dll;$(Interop)\UnityEngine.UI.dll;$(Interop)\UnityEngine.UIModule.dll;$(Interop)\Unity.TextMeshPro.dll;$(Interop)\Unity.InputSystem.dll;$(Interop)\TheGameBakers.Cairn.Global.dll;$(Interop)\TheGameBakers.Cairn.Utilities.SingletonBase.dll;$(Interop)\TheGameBakers.TGBTools.StringId.Generated.Runtime.dll;$(Interop)\TheGameBakers.TGBTools.Localization.Runtime.dll;$(Interop)\TheGameBakers.TGBTools.Common.Runtime.dll" Private="false" />
+  </ItemGroup>
+</Project>
