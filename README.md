@@ -8,7 +8,11 @@ In Steam, open **Library → CAIRN → Play**. Choose **Play normally** for the 
 
 The Windows chooser appears on the PC desktop. With SteamVR already running, Steam may show a **VR Theater Screen** notice first. Select **OK** to continue to the chooser. If you launch from inside the headset, open SteamVR's desktop view to reach the chooser, then return to the game. SteamVR can pause the view and controller input while the Frame is in standby.
 
-The chooser starts with thumbstick climbing. It remembers your choices between sessions. Menus, button prompts and subtitles are projected inside the headset. You can turn your head or lean independently of the game's camera. If you can look around but the buttons don't respond, click CAIRN's window on the PC to restore input focus.
+The chooser starts with thumbstick climbing and remembers your choices between sessions. Menus, button prompts and subtitles follow your view on a stereo panel. You can turn your head or lean independently of the game's camera. If you can look around but the buttons don't respond, click CAIRN's window on the PC to restore input focus.
+
+Both tracked controllers are visible during ordinary play. The mod reads the Steam Frame models and their physical button locations from the local SteamVR installation. A simplified model is available when the device model files are unavailable. Each controller disappears independently if tracking is lost.
+
+In the tutorial, look at your controllers for the current lesson's button labels. A ring marks the button and a line connects it to the instruction. The default **Start climbing** prompt points to **X** on the right Frame controller and follows the game's binding if you remap it. With eye selection enabled and gaze tracking active, the limb-selection lesson points to the non-reaching hand's grip. Controller movement, pointed reach and route-marking instructions depend on the options selected in the launcher. The labels reuse CAIRN's lettering and short localized instructions where available. The added VR gesture instructions are in English.
 
 | Control | How to use it |
 | --- | --- |
@@ -49,6 +53,8 @@ The Windows build targets Steam app 1588550, build 26753169, Unity 6000.0.72f1, 
 On Windows with .NET SDK, Visual Studio x64 C++ build tools, Git and the MinGW-w64 x64 C compiler available, run `.\package.ps1`. For another Steam library pass `-GameDir 'D:\SteamLibrary\steamapps\common\Cairn'`. The package is written to `dist/CairnVR.zip`.
 
 Windows verification used Steam's actual Play action for both modes. With a process-local test OpenXR runtime, the game submitted distinct left- and right-eye images, rendered its mountain and menu text, received gaze and hand poses, and accepted a simulated controller button to enter its main menu.
+
+The UI and lighting update was tested in the installed game using simulated head and controller poses. The menu stayed within one pixel of its position in each eye during rotation and leaning. During a 20° turn, the bright summit and foreground rock highlight followed the scenery. Controller silhouettes matched the projection of Valve's model to within one pixel in the tested poses. Tests using isolated tutorial records exercised the default X prompt, a remap to Y, and gaze and manual limb hints without advancing a player save.
 
 During PC streaming, the player confirmed that the mountain and CAIRN’s main menu were visible inside the Steam Frame. Gaze selection and controller-guided limb placement during a climb, comfort during play and standalone performance still need playtesting.
 

@@ -15,6 +15,8 @@ if (!$UseExistingBuild) {
     & "$PSScriptRoot/controls/build.ps1" -BepInExPath "$GameDir/BepInEx" -Test
     dotnet build "$PSScriptRoot/hud/CairnVR.Hud.csproj" -c Release "-p:GameDir=$GameDir"
     if ($LASTEXITCODE) { throw 'HUD build failed.' }
+    dotnet build "$PSScriptRoot/tutorial/CairnVR.Tutorial.csproj" -c Release "-p:GameDir=$GameDir"
+    if ($LASTEXITCODE) { throw 'Tutorial build failed.' }
 }
 $framework = Join-Path $work 'bepinex-793.zip'
 if (!(Test-Path -LiteralPath $framework)) {
@@ -41,6 +43,8 @@ try {
     Copy-Item -LiteralPath "$work/stereo/plugin/CairnVR.Camera", "$work/controls/package/BepInEx/plugins/CairnVR" -Destination $plugins -Recurse
     [void][IO.Directory]::CreateDirectory("$plugins/CairnVR.Hud")
     Copy-Item -LiteralPath "$PSScriptRoot/hud/bin/Release/net6.0/CairnVR.Hud.dll" -Destination "$plugins/CairnVR.Hud"
+    [void][IO.Directory]::CreateDirectory("$plugins/CairnVR.Tutorial")
+    Copy-Item -LiteralPath "$PSScriptRoot/tutorial/bin/Release/net6.0/CairnVR.Tutorial.dll" -Destination "$plugins/CairnVR.Tutorial"
     Copy-Item -LiteralPath "$work/launcher/CairnVRLauncher.exe", "$work/launcher/CairnVRFrame.exe", "$work/launcher/cairn-frame.sh" -Destination $stage
     Copy-Item -LiteralPath "$PSScriptRoot/README.md" -Destination "$stage/CairnVR-README.md"
     Copy-Item -LiteralPath "$PSScriptRoot/licenses" -Destination "$stage/CairnVR-licenses" -Recurse
