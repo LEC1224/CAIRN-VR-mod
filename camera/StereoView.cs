@@ -56,6 +56,7 @@ internal static class Native
     [DllImport(Dll)] internal static extern int vr_queue(IntPtr left, IntPtr right);
     [DllImport(Dll)] internal static extern IntPtr vr_submit_event();
     [DllImport(Dll)] internal static extern void vr_counts(out uint drawn, out uint empty);
+    [DllImport(Dll)] internal static extern void vr_tracking_status(out int state, out uint notRequested, out uint tracking, out uint flags);
     [DllImport(Dll)] internal static extern void vr_close();
     [DllImport(Dll, CharSet=CharSet.Ansi)] private static extern void vr_error(StringBuilder error, int size);
     internal static string Error() { var value = new StringBuilder(512); vr_error(value, value.Capacity); return value.ToString(); }
@@ -74,7 +75,8 @@ public sealed class StereoView : MonoBehaviour
     private Transform origin;
     private IntPtr submit;
     private float nextAttempt, nextLookup, blinkUntil, lastFrame, focusElevation, stickHeldSince = -1;
-    private float nextFrameReport;
+    private float nextFrameReport, nextStateCheck;
+    private int lastState;
     private int collisionLayers = Physics.DefaultRaycastLayers;
     private Material fadeMaterial;
     private Transform adjustedListener;
@@ -106,12 +108,7 @@ public sealed class StereoView : MonoBehaviour
         try
         {
             if (!opened && !Open()) return;
-            if (Time.realtimeSinceStartup >= nextFrameReport)
-            {
-                Native.vr_counts(out var drawn, out var empty);
-                CameraPlugin.Logger.LogInfo($"OpenXR frames accepted by the runtime: {drawn} stereo, {empty} empty.");
-                nextFrameReport = Time.realtimeSinceStartup + 60f;
-            }
+            ReportState();
             var result = Native.vr_frame(tracking);
             if (result < 0) throw new InvalidOperationException(Native.Error());
             if (result == 0) return;
@@ -147,6 +144,25 @@ public sealed class StereoView : MonoBehaviour
         GL.IssuePluginEvent(submit, token);
     }
 
+    private void ReportState()
+    {
+        float now = Time.realtimeSinceStartup;
+        if (now < nextStateCheck) return;
+        nextStateCheck = now + 1f;
+        Native.vr_tracking_status(out int state, out uint notRequested, out uint tracking, out uint flags);
+        if (state == lastState && now < nextFrameReport) return;
+        Native.vr_counts(out var drawn, out var empty);
+        var name = state switch
+        {
+            1 => "Idle", 2 => "Ready", 3 => "Synchronized", 4 => "Visible", 5 => "Focused",
+            6 => "Stopping", 7 => "LossPending", 8 => "Exiting", _ => "Unknown"
+        };
+        CameraPlugin.Logger.LogInfo($"OpenXR {name}: {drawn} stereo and {empty} empty frames accepted. " +
+            $"Runtime requested no rendering {notRequested} times; incomplete tracking {tracking} times. Last view flags 0x{flags:X}.");
+        if (now >= nextFrameReport) nextFrameReport = now + 60f;
+        lastState = state;
+    }
+
     private Camera FindSceneCamera()
     {
         Camera best = null;
@@ -173,6 +189,8 @@ public sealed class StereoView : MonoBehaviour
         }
         opened = true;
         nextFrameReport = Time.realtimeSinceStartup + 8f;
+        nextStateCheck = 0;
+        lastState = 0;
         submit = Native.vr_submit_event();
         origin = new GameObject("CairnVR.TrackingOrigin").transform;
         Object.DontDestroyOnLoad(origin.gameObject);
@@ -198,6 +216,8 @@ public sealed class StereoView : MonoBehaviour
         string status = SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Direct3D11
             ? "Direct3D 11 is required. Relaunch through the Steam VR option."
             : "Waiting for headset tracking. Connect or wake the headset and start your OpenXR runtime.";
+        if (opened && lastState == 3)
+            status = "The headset is connected. Put it on and return to CAIRN in the headset.";
         GUI.Box(new Rect(12, 12, Mathf.Min(580, Screen.width - 24), 54), "CAIRN VR\n" + status);
     }
 
