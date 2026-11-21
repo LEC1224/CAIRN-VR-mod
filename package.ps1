@@ -34,6 +34,8 @@ try {
     $enabled = [regex]'(?m)^enabled = true(?=\r?$)'
     if ($enabled.Matches($config).Count -ne 1) { throw 'Unexpected Doorstop configuration.' }
     [IO.File]::WriteAllText($ini, $enabled.Replace($config, 'enabled = false'))
+    [void][IO.Directory]::CreateDirectory("$stage/BepInEx/config")
+    Copy-Item -LiteralPath "$PSScriptRoot/launcher/BepInEx.cfg" -Destination "$stage/BepInEx/config"
 
     $plugins = Join-Path $stage 'BepInEx/plugins'
     Copy-Item -LiteralPath "$work/stereo/plugin/CairnVR.Camera", "$work/controls/package/BepInEx/plugins/CairnVR" -Destination $plugins -Recurse
