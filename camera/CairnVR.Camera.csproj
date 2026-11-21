@@ -8,6 +8,7 @@
   <ItemGroup>
     <Reference Include="$(GameDir)/BepInEx/core/BepInEx.Core.dll;$(GameDir)/BepInEx/core/BepInEx.Unity.IL2CPP.dll;$(GameDir)/BepInEx/core/Il2CppInterop.Runtime.dll" Private="false" />
     <Reference Include="$(GameDir)/BepInEx/interop/Unity.InputSystem.dll;$(GameDir)/BepInEx/interop/UnityEngine.CoreModule.dll;$(GameDir)/BepInEx/interop/TheGameBakers.Cairn.Global.dll;$(GameDir)/BepInEx/interop/Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(GameDir)/BepInEx/interop/UnityEngine.PhysicsModule.dll;$(GameDir)/BepInEx/interop/UnityEngine.IMGUIModule.dll;$(GameDir)/BepInEx/interop/TheGameBakers.Cairn.Utilities.SingletonBase.dll" Private="false" />
   </ItemGroup>
 </Project>
 

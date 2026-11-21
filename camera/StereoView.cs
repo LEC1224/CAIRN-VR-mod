@@ -17,7 +17,7 @@ public sealed class CameraPlugin : BasePlugin
 {
     internal static ManualLogSource Logger;
     internal static ConfigEntry<float> RenderScale;
-    internal static ConfigEntry<bool> SteadyFalls, FollowAudio, FlipY;
+    internal static ConfigEntry<bool> SteadyFalls, FollowAudio, FlipY, LeanFade, LookAssist, StickRecenter;
     internal static string BinaryDirectory;
 
     public override void Load()
@@ -26,6 +26,9 @@ public sealed class CameraPlugin : BasePlugin
         Logger = Log;
         RenderScale = Config.Bind("Display", "RenderScale", 1f, "Multiplier for each runtime-recommended eye resolution (0.4 to 1.5).");
         SteadyFalls = Config.Bind("Comfort", "StableFalls", true, "Hold the viewing position during falls and rewinds, then fade through black to the new position.");
+        LeanFade = Config.Bind("Comfort", "FadeNearRock", true, "Darken the view as a physical head lean reaches solid scenery.");
+        LookAssist = Config.Bind("Comfort", "KeepClimberInView", true, "Gently follow steep camera aim so the climber stays in view. Turning this off keeps neutral pitch level.");
+        StickRecenter = Config.Bind("Comfort", "GamepadRecenter", true, "Hold both thumbstick clicks for 0.8 seconds to recenter the headset.");
         FollowAudio = Config.Bind("Audio", "HeadOrientation", true, "Orient the game's spatial listener with the headset when it has its own transform.");
         FlipY = Config.Bind("Display", "FlipEyeTextures", true, "Flip Unity's offscreen projection for direct D3D11 texture submission.");
         BinaryDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -70,7 +73,11 @@ public sealed class StereoView : MonoBehaviour
     private readonly Native.Tracking[] tracking = new Native.Tracking[2];
     private Transform origin;
     private IntPtr submit;
-    private float nextAttempt, nextLookup, blinkUntil;
+    private float nextAttempt, nextLookup, blinkUntil, lastFrame, focusElevation, stickHeldSince = -1;
+    private int collisionLayers = Physics.DefaultRaycastLayers;
+    private Material fadeMaterial;
+    private Transform adjustedListener;
+    private Quaternion originalAudio, adjustedAudio;
     private bool opened, centered, wasFalling, hasAnchor, reportedFrame;
     private string previousError;
     private Vector3 neutralHead, anchor;
@@ -82,6 +89,18 @@ public sealed class StereoView : MonoBehaviour
     private void LateUpdate()
     {
         if (Application.isFocused && Keyboard.current?.f8Key.wasPressedThisFrame == true) Recenter();
+        var pad = Gamepad.current;
+        if (CameraPlugin.StickRecenter.Value && Application.isFocused && pad != null &&
+            pad.leftStickButton.isPressed && pad.rightStickButton.isPressed)
+        {
+            if (stickHeldSince < 0) stickHeldSince = Time.realtimeSinceStartup;
+            if (Time.realtimeSinceStartup - stickHeldSince >= .8f)
+            {
+                Recenter();
+                stickHeldSince = float.PositiveInfinity;
+            }
+        }
+        else stickHeldSince = -1;
         if (!opened && Time.realtimeSinceStartup < nextAttempt) return;
         try
         {
@@ -93,11 +112,12 @@ public sealed class StereoView : MonoBehaviour
             {
                 var source = Camera.main;
                 if (!source || !source.enabled) source = FindSceneCamera();
-                var blackout = UpdateTracking(source);
-                for (var i = 0; i < eyes.Length; i++) RenderEye(i, source, blackout);
+                var fade = UpdateTracking(source);
+                for (var i = 0; i < eyes.Length; i++) RenderEye(i, source, fade);
                 int token = Native.vr_queue(textures[0], textures[1]);
                 if (token < 0) throw new InvalidOperationException("The stereo frame could not be queued.");
                 GL.IssuePluginEvent(submit, token);
+                lastFrame = Time.realtimeSinceStartup;
                 if (!reportedFrame)
                 {
                     CameraPlugin.Logger.LogInfo($"Stereo frame queued. Source camera: {(source ? source.name : "UI only")}.");
@@ -158,7 +178,16 @@ public sealed class StereoView : MonoBehaviour
         return true;
     }
 
-    private bool UpdateTracking(Camera source)
+    private void OnGUI()
+    {
+        if (opened && reportedFrame && Time.realtimeSinceStartup - lastFrame < 3f) return;
+        string status = SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Direct3D11
+            ? "Direct3D 11 is required. Relaunch through the Steam VR option."
+            : "Waiting for headset tracking. Connect or wake the headset and start your OpenXR runtime.";
+        GUI.Box(new Rect(12, 12, Mathf.Min(580, Screen.width - 24), 54), "CAIRN VR\n" + status);
+    }
+
+    private float UpdateTracking(Camera source)
     {
         float now = Time.realtimeSinceStartup;
         var head = (tracking[0].Position + tracking[1].Position) * .5f;
@@ -175,6 +204,9 @@ public sealed class StereoView : MonoBehaviour
             nextLookup = now + 1f;
             if (!pawn) pawn = Object.FindObjectOfType<PawnControllerSwitcher>();
             if (!listener && CameraPlugin.FollowAudio.Value) listener = Object.FindObjectOfType<AudioListenerController>();
+            var cameraManager = CameraManager.IsReady ? CameraManager.Instance : null;
+            var gameRig = cameraManager ? cameraManager.CurrentCairnCamera : null;
+            collisionLayers = gameRig && gameRig.collisionLayers != 0 ? gameRig.collisionLayers : Physics.DefaultRaycastLayers;
         }
         bool falling = false;
         if (CameraPlugin.SteadyFalls.Value && pawn && pawn.isActiveAndEnabled)
@@ -193,6 +225,9 @@ public sealed class StereoView : MonoBehaviour
                     blinkUntil = now + .12f;
                 var forward = Vector3.ProjectOnPlane(target.forward, Vector3.up);
                 if (forward.sqrMagnitude > .001f) anchorRotation = Quaternion.LookRotation(forward, Vector3.up);
+                var elevation = CameraPlugin.LookAssist.Value ? FramingElevation(source) : 0f;
+                focusElevation = hasAnchor && handle == sceneHandle
+                    ? Mathf.MoveTowards(focusElevation, elevation, Time.unscaledDeltaTime * 75f) : elevation;
                 anchor = target.position;
                 hasAnchor = true;
                 sceneHandle = handle;
@@ -201,16 +236,77 @@ public sealed class StereoView : MonoBehaviour
         else if (!hasAnchor) anchorRotation = Quaternion.identity;
         wasFalling = falling;
         var yaw = anchorRotation * neutralRotation;
-        origin.SetPositionAndRotation(anchor - yaw * neutralHead, yaw);
+        var direction = yaw * headRotation * Vector3.forward;
+        var right = Vector3.Cross(Vector3.up, direction);
+        // Only support the authored pitch when facing along it. A sideways glance
+        // keeps the horizon level, and physical translations always follow gravity.
+        var aimWeight = Vector3.Dot(direction, anchorRotation * Vector3.forward);
+        var basis = right.sqrMagnitude > .0001f
+            ? Quaternion.AngleAxis(-focusElevation * aimWeight, right.normalized) * yaw : yaw;
+        var worldHead = anchor + yaw * (head - neutralHead);
+        origin.SetPositionAndRotation(worldHead - basis * head, basis);
         if (CameraPlugin.FollowAudio.Value && listener && source)
         {
             var audio = listener.AudioListenerTransform;
-            if (audio && audio != source.transform && !source.transform.IsChildOf(audio)) audio.rotation = yaw * headRotation;
+            if (listener.isActiveAndEnabled && audio && audio != source.transform && !source.transform.IsChildOf(audio))
+            {
+                if (adjustedListener != audio) RestoreAudio();
+                if (!adjustedListener || Quaternion.Angle(audio.rotation, adjustedAudio) > .01f)
+                    originalAudio = audio.rotation;
+                adjustedListener = audio;
+                adjustedAudio = basis * headRotation;
+                audio.rotation = adjustedAudio;
+            }
+            else RestoreAudio();
         }
-        return now < blinkUntil;
+        else RestoreAudio();
+        if (now < blinkUntil) return Mathf.Clamp01((blinkUntil - now) / .08f);
+        return source && CameraPlugin.LeanFade.Value ? LeanOpacity(worldHead) : 0f;
     }
 
-    private void RenderEye(int index, Camera source, bool blackout)
+    private float FramingElevation(Camera source)
+    {
+        var direction = source.transform.forward;
+        if (pawn && pawn.isActiveAndEnabled)
+        {
+            var climb = pawn.climbingPawnController;
+            var walk = pawn.walkingPawnController;
+            var body = climb && climb.isActiveAndEnabled ? climb.bodyHandler : null;
+            Vector3? aim = body != null ? body.BodyPosition :
+                walk && walk.isActiveAndEnabled ? ((Component)walk).transform.position + Vector3.up : null;
+            if (aim.HasValue)
+            {
+                var viewport = source.WorldToViewportPoint(aim.Value);
+                if (viewport.z > .1f && viewport.x > 0 && viewport.x < 1 && viewport.y > 0 && viewport.y < 1)
+                    direction = (aim.Value - source.transform.position).normalized;
+            }
+        }
+        var elevation = Mathf.Asin(Mathf.Clamp(direction.y, -1, 1)) * Mathf.Rad2Deg;
+        float fov = elevation > 0 ? Mathf.Min(tracking[0].up, tracking[1].up) : -Mathf.Max(tracking[0].down, tracking[1].down);
+        var margin = Mathf.Clamp(fov * Mathf.Rad2Deg * .40f, 3f, 20f);
+        return Mathf.Sign(elevation) * Mathf.Max(0, Mathf.Abs(elevation) - margin);
+    }
+
+    private float LeanOpacity(Vector3 worldHead)
+    {
+        var offset = worldHead - anchor;
+        float distance = offset.magnitude;
+        if (distance < .025f) return 0f;
+        const float clearance = .14f;
+        if (Physics.SphereCast(anchor, .065f, offset / distance, out var obstacle,
+            distance + clearance, collisionLayers, QueryTriggerInteraction.Ignore))
+            return 1 - Mathf.Clamp01((obstacle.distance - distance) / clearance);
+        return Physics.CheckSphere(worldHead, .065f, collisionLayers, QueryTriggerInteraction.Ignore) ? 1f : 0f;
+    }
+
+    private void RestoreAudio()
+    {
+        if (adjustedListener && Quaternion.Angle(adjustedListener.rotation, adjustedAudio) <= .01f)
+            adjustedListener.rotation = originalAudio;
+        adjustedListener = null;
+    }
+
+    private void RenderEye(int index, Camera source, float fade)
     {
         var eye = eyes[index];
         var view = tracking[index];
@@ -233,7 +329,7 @@ public sealed class StereoView : MonoBehaviour
         var oldTarget = RenderTexture.active;
         try
         {
-            if (blackout)
+            if (fade >= .999f)
             {
                 RenderTexture.active = images[index];
                 GL.Clear(true,true,Color.black);
@@ -244,8 +340,33 @@ public sealed class StereoView : MonoBehaviour
             eye.Render();
             GL.invertCulling = oldCulling;
             AfterEyeRender?.Invoke(eye);
+            if (fade > .001f) DrawFade(images[index], fade);
         }
         finally { GL.invertCulling = oldCulling; RenderTexture.active = oldTarget; }
+    }
+
+    private void DrawFade(RenderTexture target, float opacity)
+    {
+        if (!fadeMaterial)
+        {
+            var shader = Shader.Find("UI/Default");
+            if (!shader) return;
+            fadeMaterial = new Material(shader);
+            fadeMaterial.mainTexture = Texture2D.whiteTexture;
+        }
+        RenderTexture.active = target;
+        GL.PushMatrix();
+        try
+        {
+            GL.LoadOrtho();
+            if (!fadeMaterial.SetPass(0)) return;
+            GL.Begin(GL.QUADS);
+            GL.Color(new Color(0, 0, 0, opacity));
+            GL.Vertex3(0, 0, 0); GL.Vertex3(0, 1, 0);
+            GL.Vertex3(1, 1, 0); GL.Vertex3(1, 0, 0);
+            GL.End();
+        }
+        finally { GL.PopMatrix(); }
     }
 
     private void Report(string message)
@@ -259,6 +380,8 @@ public sealed class StereoView : MonoBehaviour
     private void Close()
     {
         if (opened) Native.vr_close();
+        RestoreAudio();
+        if (fadeMaterial) Object.Destroy(fadeMaterial);
         opened = false; centered = false; hasAnchor = false; wasFalling = false; reportedFrame = false;
         if (origin) Object.Destroy(origin.gameObject);
         foreach (var image in images) if (image) { image.Release(); Object.Destroy(image); }
