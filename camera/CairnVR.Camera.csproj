@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(GameDir)/BepInEx/core/BepInEx.Core.dll;$(GameDir)/BepInEx/core/BepInEx.Unity.IL2CPP.dll;$(GameDir)/BepInEx/core/Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(GameDir)/BepInEx/interop/Unity.InputSystem.dll;$(GameDir)/BepInEx/interop/UnityEngine.CoreModule.dll;$(GameDir)/BepInEx/interop/TheGameBakers.Cairn.Global.dll;$(GameDir)/BepInEx/interop/Il2Cppmscorlib.dll" Private="false" />
+  </ItemGroup>
+</Project>
+
+
