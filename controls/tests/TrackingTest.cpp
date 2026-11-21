@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <algorithm>
+#include <map>
 struct Pose
 {
     float x, y, z, qx, qy, qz, qw;
@@ -17,10 +19,15 @@ struct Sample
     Pose gaze, grip, aim;
     float lx, ly, rx, ry, lt, rt;
     uint32_t buttons;
+    Pose otherGrip;
+    uint32_t frameHands;
 };
 int actionId = 0, attempts = 0;
 bool focus = true;
+bool supportsFrame = false, otherHandTracked = true;
 std::vector<std::string> paths;
+std::map<XrAction, std::string> actionNames;
+std::map<std::string, std::string> frameBindings;
 template <class T> T handle(uint64_t id)
 {
     return reinterpret_cast<T>(id);
@@ -28,23 +35,30 @@ template <class T> T handle(uint64_t id)
 XrResult XRAPI_CALL create(const XrInstanceCreateInfo *i, const XrApiLayerCreateInfo *, XrInstance *out)
 {
     ++attempts;
-    if (i->enabledExtensionCount == 2)
+    if (!supportsFrame && i->enabledExtensionCount == 2)
         return XR_ERROR_EXTENSION_NOT_PRESENT;
-    assert(i->enabledExtensionCount == 1 &&
+    assert(i->enabledExtensionCount == (supportsFrame ? 2u : 1u) &&
            !strcmp(i->enabledExtensionNames[0], "XR_EXT_eye_gaze_interaction"));
     *out = handle<XrInstance>(1);
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL xrStringToPath(XrInstance, const char *value, XrPath *p)
 {
-    paths.emplace_back(value);
-    *p = paths.size();
+    auto found = std::find(paths.begin(), paths.end(), value);
+    if (found == paths.end()) { paths.emplace_back(value); *p = paths.size(); }
+    else *p = 1u + (found - paths.begin());
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL xrSuggestInteractionProfileBindings(XrInstance,
                                                         const XrInteractionProfileSuggestedBinding *info)
 {
     assert(info->countSuggestedBindings);
+    if (paths.at(info->interactionProfile-1) == "/interaction_profiles/valve/frame_controller_valve")
+        for (uint32_t i=0; i<info->countSuggestedBindings; ++i)
+        {
+            const auto b=info->suggestedBindings[i];
+            frameBindings[actionNames.at(b.action)] = paths.at(b.binding-1);
+        }
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL xrCreateActionSet(XrInstance, const XrActionSetCreateInfo *, XrActionSet *s)
@@ -52,9 +66,10 @@ XrResult XRAPI_CALL xrCreateActionSet(XrInstance, const XrActionSetCreateInfo *,
     *s = handle<XrActionSet>(1);
     return XR_SUCCESS;
 }
-XrResult XRAPI_CALL xrCreateAction(XrActionSet, const XrActionCreateInfo *, XrAction *a)
+XrResult XRAPI_CALL xrCreateAction(XrActionSet, const XrActionCreateInfo *info, XrAction *a)
 {
     *a = handle<XrAction>(++actionId);
+    actionNames[*a] = info->actionName;
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL xrAttachSessionActionSets(XrSession, const XrSessionActionSetsAttachInfo *info)
@@ -85,13 +100,19 @@ XrResult XRAPI_CALL xrGetActionStatePose(XrSession, const XrActionStateGetInfo *
     p->isActive = 1;
     return XR_SUCCESS;
 }
-XrResult XRAPI_CALL xrLocateSpace(XrSpace, XrSpace base, XrTime time, XrSpaceLocation *p)
+XrResult XRAPI_CALL xrLocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpaceLocation *p)
 {
     assert((uint64_t)base == 42 && time == 128);
-    p->locationFlags = 3;
+    p->locationFlags = (!otherHandTracked && actionNames.at((XrAction)space) == "other_grip_pose") ? 0u : 3u;
     p->pose.orientation = {0, 0, 0, 1};
-    p->pose.position = {1, 2, 3};
+    p->pose.position = {float(reinterpret_cast<uintptr_t>(space)), 2, 3};
     return XR_SUCCESS;
+}
+XrResult XRAPI_CALL xrGetCurrentInteractionProfile(XrSession, XrPath hand, XrInteractionProfileState *state)
+{
+    // SteamVR can enable the extension even with a different active controller.
+    const auto profile = paths.at(hand-1) == "/user/hand/left" ? "/interaction_profiles/valve/frame_controller_valve" : "/interaction_profiles/oculus/touch_controller";
+    return xrStringToPath(XR_NULL_HANDLE, profile, &state->interactionProfile);
 }
 XrResult XRAPI_CALL xrGetActionStateVector2f(XrSession, const XrActionStateGetInfo *, XrActionStateVector2f *p)
 {
@@ -132,6 +153,7 @@ XrResult XRAPI_CALL get(XrInstance, const char *name, PFN_xrVoidFunction *f)
         return XR_SUCCESS;                                                                                     \
     }
     ENTRY(xrStringToPath)
+    ENTRY(xrGetCurrentInteractionProfile)
     ENTRY(xrSuggestInteractionProfileBindings) ENTRY(xrCreateActionSet) ENTRY(xrCreateAction)
         ENTRY(xrAttachSessionActionSets) ENTRY(xrCreateActionSpace) ENTRY(xrBeginSession) ENTRY(xrLocateViews)
             ENTRY(xrSyncActions) ENTRY(xrGetActionStatePose) ENTRY(xrLocateSpace)
@@ -179,7 +201,8 @@ int wmain(int argc, wchar_t **argv)
     info.displayTime = 128;
     assert(xrLocateViews(s, &info, nullptr, 2, nullptr, nullptr) == XR_SUCCESS);
     Sample sample{};
-    assert(rd(&sample, sizeof(sample)) && sample.seq && sample.pressed == 3 && sample.valid == 15 &&
+    assert(rd(&sample, sizeof(sample)) && sample.seq && sample.pressed == 3 && sample.valid == 31 &&
+           sample.grip.x != sample.otherGrip.x && sample.otherGrip.z == -3 && sample.frameHands == 0 &&
            sample.gaze.z == -3 && sample.lx == .5f && sample.lt == .75f && sample.buttons == 0x3fff);
     assert(!rd(&sample, 12));
     focus = false;
@@ -188,6 +211,19 @@ int wmain(int argc, wchar_t **argv)
     xrDestroySession(s);
     xrDestroyInstance(instance);
     assert(!rd(&sample, sizeof(sample)));
-    puts("Passed layer negotiation, extension fallback, gaze/pose conversion, buttons, axes, focus loss, "
-         "session teardown.");
+    supportsFrame = true;
+    focus = true;
+    otherHandTracked = false;
+    SetEnvironmentVariableA("CAIRNVR_LEFTHANDED", "1");
+    assert(layer.createApiLayerInstance(&ii, &ci, &instance) == XR_SUCCESS);
+    assert(xrBeginSession(s, nullptr) == XR_SUCCESS);
+    assert(frameBindings["right_grip_pose"] == "/user/hand/left/input/grip/pose");
+    assert(frameBindings["other_grip_pose"] == "/user/hand/right/input/grip/pose");
+    assert(frameBindings["select_limb"] == "/user/hand/right/input/squeeze/click");
+    assert(frameBindings["x"] == "/user/hand/right/input/x/click");
+    xrLocateViews(s, &info, nullptr, 2, nullptr, nullptr);
+    assert(rd(&sample, sizeof(sample)) && sample.frameHands == 1 && sample.valid == 15);
+    xrDestroySession(s);
+    xrDestroyInstance(instance);
+    puts("Passed input negotiation, physical hand profiles, handedness, independent pose validity, buttons, focus loss and teardown.");
 }

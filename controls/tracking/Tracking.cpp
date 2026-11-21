@@ -20,6 +20,7 @@ enum Action
     Gaze,
     GripPose,
     AimPose,
+    OtherGripPose,
     Select,
     Reach,
     LStick,
@@ -43,7 +44,10 @@ enum Action
     Count
 };
 XrAction actions[Count]{};
-XrSpace spaces[3]{};
+XrSpace spaces[4]{};
+XrPath handPaths[2]{}, framePath{};
+unsigned frameHands{};
+ULONGLONG nextProfileCheck{};
 struct Pose
 {
     float x, y, z, qx, qy, qz, qw;
@@ -55,8 +59,10 @@ struct Sample
     Pose gaze, grip, aim;
     float lx, ly, rx, ry, lt, rt;
     unsigned buttons;
+    Pose otherGrip;
+    unsigned frameHands;
 };
-static_assert(sizeof(Sample) == 128, "Managed sample ABI mismatch");
+static_assert(sizeof(Sample) == 160, "Managed sample ABI mismatch");
 Sample latest{};
 std::mutex guard;
 ULONGLONG sampledAt{};
@@ -77,6 +83,7 @@ struct Dispatch
     PFN_xrBeginSession xrBeginSession{};
     PFN_xrLocateViews xrLocateViews{};
     PFN_xrSyncActions xrSyncActions{};
+    PFN_xrGetCurrentInteractionProfile xrGetCurrentInteractionProfile{};
     PFN_xrGetActionStatePose xrGetActionStatePose{};
     PFN_xrLocateSpace xrLocateSpace{};
     PFN_xrGetActionStateVector2f xrGetActionStateVector2f{};
@@ -98,6 +105,7 @@ void cacheFunctions()
     api.xrBeginSession = proc<PFN_xrBeginSession>("xrBeginSession");
     api.xrLocateViews = proc<PFN_xrLocateViews>("xrLocateViews");
     api.xrSyncActions = proc<PFN_xrSyncActions>("xrSyncActions");
+    api.xrGetCurrentInteractionProfile = proc<PFN_xrGetCurrentInteractionProfile>("xrGetCurrentInteractionProfile");
     api.xrGetActionStatePose = proc<PFN_xrGetActionStatePose>("xrGetActionStatePose");
     api.xrLocateSpace = proc<PFN_xrLocateSpace>("xrLocateSpace");
     api.xrGetActionStateVector2f = proc<PFN_xrGetActionStateVector2f>("xrGetActionStateVector2f");
@@ -131,6 +139,7 @@ XrPath path(const std::string &name)
 const char *names[Count] = {"gaze",
                             "right_grip_pose",
                             "right_aim",
+                            "other_grip_pose",
                             "select_limb",
                             "reach_or_mark",
                             "left_stick",
@@ -156,6 +165,7 @@ void bindProfile(const char *profile, bool frame, bool shoulder)
     const char *components[Count] = {nullptr,
                                      "right/input/grip/pose",
                                      "right/input/aim/pose",
+                                     "left/input/grip/pose",
                                      "left/input/squeeze/value",
                                      "right/input/squeeze/value",
                                      "left/input/thumbstick",
@@ -195,6 +205,7 @@ void bindProfile(const char *profile, bool frame, bool shoulder)
     {
         components[GripPose] = "left/input/grip/pose";
         components[AimPose] = "left/input/aim/pose";
+        components[OtherGripPose] = "right/input/grip/pose";
         components[Select] = frame ? "right/input/squeeze/click" : "right/input/squeeze/value";
         components[Reach] = frame ? "left/input/squeeze/click" : "left/input/squeeze/value";
     }
@@ -224,7 +235,7 @@ void createActions()
         XrActionCreateInfo ai{XR_TYPE_ACTION_CREATE_INFO};
         strcpy_s(ai.actionName, names[i]);
         strcpy_s(ai.localizedActionName, names[i]);
-        ai.actionType = i <= AimPose                   ? XR_ACTION_TYPE_POSE_INPUT
+        ai.actionType = i <= OtherGripPose             ? XR_ACTION_TYPE_POSE_INPUT
                         : (i == LStick || i == RStick) ? XR_ACTION_TYPE_VECTOR2F_INPUT
                         : (i == LT || i == RT)         ? XR_ACTION_TYPE_FLOAT_INPUT
                                                        : XR_ACTION_TYPE_BOOLEAN_INPUT;
@@ -250,6 +261,11 @@ XrResult XRAPI_CALL begin(XrSession s, const XrSessionBeginInfo *info)
     if (wanted && s != session)
     {
         session = s;
+        handPaths[0] = path("/user/hand/left");
+        handPaths[1] = path("/user/hand/right");
+        framePath = frameProfile ? path("/interaction_profiles/valve/frame_controller_valve") : XR_NULL_PATH;
+        frameHands = frameProfile ? 3u : 0u;
+        nextProfileCheck = 0;
         attached = false;
         if (!set)
             createActions();
@@ -259,7 +275,7 @@ XrResult XRAPI_CALL begin(XrSession s, const XrSessionBeginInfo *info)
         if (set && XR_SUCCEEDED(api.xrAttachSessionActionSets(s, &attach)))
         {
             attached = true;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i <= OtherGripPose; i++)
                 if (actions[i])
                 {
                     XrActionSpaceCreateInfo si{XR_TYPE_ACTION_SPACE_CREATE_INFO};
@@ -288,13 +304,28 @@ XrResult XRAPI_CALL locate(XrSession s, const XrViewLocateInfo *info, XrViewStat
         return result;
     }
     Sample out{};
+    const auto now = GetTickCount64();
+    if (framePath && api.xrGetCurrentInteractionProfile && now >= nextProfileCheck)
+    {
+        nextProfileCheck = now + 1000;
+        for (unsigned hand = 0; hand < 2; ++hand)
+        {
+            XrInteractionProfileState current{XR_TYPE_INTERACTION_PROFILE_STATE};
+            if (XR_SUCCEEDED(api.xrGetCurrentInteractionProfile(s, handPaths[hand], &current)) && current.interactionProfile)
+            {
+                const unsigned bit = 1u << hand;
+                frameHands = current.interactionProfile == framePath ? frameHands | bit : frameHands & ~bit;
+            }
+        }
+    }
+    out.frameHands = frameHands;
     for (int i = 0; i < Count; i++)
     {
         if (!actions[i])
             continue;
         XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
         gi.action = actions[i];
-        if (i <= AimPose && spaces[i])
+        if (i <= OtherGripPose && spaces[i])
         {
             XrActionStatePose ps{XR_TYPE_ACTION_STATE_POSE};
             XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
@@ -312,9 +343,11 @@ XrResult XRAPI_CALL locate(XrSession s, const XrViewLocateInfo *info, XrViewStat
                 out.gaze = v;
             else if (i == GripPose)
                 out.grip = v;
-            else
+            else if (i == AimPose)
                 out.aim = v;
-            out.valid |= 1u << i;
+            else
+                out.otherGrip = v;
+            out.valid |= i == OtherGripPose ? 16u : 1u << i;
         }
         else if (i == LStick || i == RStick)
         {

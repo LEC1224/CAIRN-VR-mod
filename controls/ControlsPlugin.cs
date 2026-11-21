@@ -8,6 +8,7 @@ using UnityEngine;
 namespace CairnVR.Controls;
 
 [BepInPlugin("cairn.vr.controls", "CAIRN VR climbing controls", "1.0.0")]
+[BepInDependency("community.cairnvr.camera")]
 public sealed class ControlsPlugin : BasePlugin
 {
     internal enum RecenterControl { BothGrips, BothStickClicks, Off }
@@ -30,6 +31,7 @@ public sealed class ControlsPlugin : BasePlugin
             "Controller displacement that produces full reach stick input.").Value, .04f, .45f);
         var path = Path.Combine(Path.GetDirectoryName(GetType().Assembly.Location)!, "openxr", "CairnTracking.dll");
         Tracking.Initialize(path);
+        ControllerModels.Start();
         AddComponent<ClimbingControls>();
         PreviouslyRanInBackground = Application.runInBackground;
         Application.runInBackground = true;
@@ -52,6 +54,8 @@ internal struct Sample
     public TrackedPose Gaze, Grip, Aim;
     public float LX, LY, RX, RY, LT, RT;
     public uint Buttons;
+    public TrackedPose OtherGrip;
+    public uint FrameHands;
 }
 internal static class Tracking
 {

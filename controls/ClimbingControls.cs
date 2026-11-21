@@ -250,6 +250,7 @@ public sealed class ClimbingControls : MonoBehaviour
     }
     public void OnDestroy()
     {
+        ControllerModels.Stop();
         gamepad.Dispose(); ClearPins();
         Application.runInBackground = ControlsPlugin.PreviouslyRanInBackground;
         if (cue) Object.Destroy(cue); if (ink) Object.Destroy(ink);
