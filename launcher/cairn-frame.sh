@@ -20,18 +20,21 @@ else
 fi
 if [[ $mode == ask ]]; then
     if command -v zenity >/dev/null && [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
-        choice=$(zenity --list --title="Play CAIRN" --column="Play mode" "Play normally" "Play in VR") || exit 0
-        if [[ $choice == "Play in VR" ]]; then
+        choice=$(zenity --list --title="Play CAIRN" --column="Play mode" --column="ID" --hide-column=2 --print-column=2 \
+            "Play normally" normal "VR with thumbstick reach" stick \
+            "VR with controller movement" reach "VR with pointing at the rock" point) || exit 0
+        if [[ $choice != normal ]]; then
             mode=vr
             defaults=()
-            for item in gaze reach markers; do
+            for item in gaze markers lefthanded; do
                 if [[ "|$saved|" == *"|$item|"* ]]; then defaults+=(TRUE); else defaults+=(FALSE); fi
             done
             saved=$(zenity --list --checklist --title="VR controls" --ok-label="Play in VR" \
                 --column="Use" --column="ID" --column="Control" --hide-column=2 --print-column=2 \
                 "${defaults[0]}" gaze "Select limbs with eye tracking" \
-                "${defaults[1]}" reach "Move limbs with controller motion" \
-                "${defaults[2]}" markers "Place route markers while scouting") || exit 0
+                "${defaults[1]}" markers "Place route markers while scouting" \
+                "${defaults[2]}" lefthanded "Use left hand to reach and mark routes") || exit 0
+            saved="$choice${saved:+|$saved}"
             mkdir -p -- "$config_dir"
             temporary=$(mktemp "$config_dir/.frame-controls.XXXXXX")
             printf '%s\n' "$saved" > "$temporary"
@@ -73,6 +76,8 @@ export CAIRN_VR=1
 export CAIRNVR_GAZE=${CAIRNVR_GAZE:-$(feature gaze)}
 export CAIRNVR_REACH=${CAIRNVR_REACH:-$(feature reach)}
 export CAIRNVR_MARKERS=${CAIRNVR_MARKERS:-$(feature markers)}
+export CAIRNVR_POINT=${CAIRNVR_POINT:-$(feature point)}
+export CAIRNVR_LEFTHANDED=${CAIRNVR_LEFTHANDED:-$(feature lefthanded)}
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}winhttp=n,b"
 unset DOORSTOP_DISABLE
 exec "${command_line[@]}" -force-d3d11 --doorstop-enabled true

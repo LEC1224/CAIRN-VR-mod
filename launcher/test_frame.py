@@ -28,6 +28,8 @@ exec "$@"
             env = dict(os.environ, TEST_DIR=stage.as_posix(), XDG_CONFIG_HOME=stage.as_posix(),
                        WINEDLLOVERRIDES="other=n", CAIRNVR_GAZE="1", CAIRNVR_REACH="1",
                        CAIRNVR_MARKERS="0", DISPLAY="", WAYLAND_DISPLAY="", MSYS2_ARG_CONV_EXCL="*")
+            (stage / "cairn-vr").mkdir()
+            (stage / "cairn-vr/frame-controls").write_text("point|lefthanded\n")
             for mode in ("--normal", "--vr", None):
                 command = [bash, "cairn-frame.sh"] + ([mode] if mode else [])
                 command.extend(["bash", "fake-proton.sh", "waitforexitandrun", "./Cairn.exe", "two words", ""])
@@ -43,6 +45,8 @@ exec "$@"
                     self.assertIn("XR_API_LAYER_PATH=" + str(stage / r"BepInEx\plugins\CairnVR\openxr"), lines)
                     self.assertIn("XR_ENABLE_API_LAYERS=XR_APILAYER_CAIRN_controls", lines)
                     self.assertIn("CAIRNVR_GAZE=1", lines)
+                    self.assertIn("CAIRNVR_POINT=1", lines)
+                    self.assertIn("CAIRNVR_LEFTHANDED=1", lines)
 
 
 if __name__ == "__main__":

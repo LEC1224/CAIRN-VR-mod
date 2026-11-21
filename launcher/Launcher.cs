@@ -47,6 +47,8 @@ internal static class Launcher
                 start.EnvironmentVariables["CAIRN_VR"] = "1";
                 start.EnvironmentVariables["CAIRNVR_GAZE"] = settings.Gaze ? "1" : "0";
                 start.EnvironmentVariables["CAIRNVR_REACH"] = settings.Reach ? "1" : "0";
+                start.EnvironmentVariables["CAIRNVR_POINT"] = settings.Point ? "1" : "0";
+                start.EnvironmentVariables["CAIRNVR_LEFTHANDED"] = settings.LeftHanded ? "1" : "0";
                 start.EnvironmentVariables["CAIRNVR_MARKERS"] = settings.Markers ? "1" : "0";
                 Prepend(start, "XR_API_LAYER_PATH", layer);
                 Prepend(start, "XR_ENABLE_API_LAYERS", "XR_APILAYER_CAIRN_controls");
@@ -101,7 +103,7 @@ internal sealed class Options
     private static readonly string SettingsFile = Path.Combine(
         Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         @"CairnVR\controls.ini");
-    public bool Gaze, Reach, Markers;
+    public bool Gaze, Reach, Point, LeftHanded, Markers;
 
     public static Options Load()
     {
@@ -109,7 +111,9 @@ internal sealed class Options
         if (!File.Exists(SettingsFile)) return options;
         string[] lines = File.ReadAllLines(SettingsFile);
         options.Gaze = lines.Contains("gaze=1");
-        options.Reach = lines.Contains("reach=1");
+        options.Point = lines.Contains("point=1");
+        options.Reach = !options.Point && lines.Contains("reach=1");
+        options.LeftHanded = lines.Contains("lefthanded=1");
         options.Markers = lines.Contains("markers=1");
         return options;
     }
@@ -122,7 +126,8 @@ internal sealed class Options
         try
         {
             File.WriteAllLines(temporary, new[] { "gaze=" + (Gaze ? "1" : "0"),
-                "reach=" + (Reach ? "1" : "0"), "markers=" + (Markers ? "1" : "0") });
+                "reach=" + (Reach ? "1" : "0"), "point=" + (Point ? "1" : "0"),
+                "lefthanded=" + (LeftHanded ? "1" : "0"), "markers=" + (Markers ? "1" : "0") });
             if (File.Exists(SettingsFile)) File.Replace(temporary, SettingsFile, null);
             else File.Move(temporary, SettingsFile);
         }
@@ -153,23 +158,29 @@ internal sealed class ModeChooser : Form
         MinimizeBox = false;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(380, 226);
+        ClientSize = new Size(380, 340);
         var normal = new Button { Text = "Play normally", Location = new Point(18, 16), Size = new Size(166, 46), TabIndex = 0 };
         var vr = new Button { Text = "Play in VR", Location = new Point(193, 16), Size = new Size(168, 46), TabIndex = 1 };
-        var group = new GroupBox { Text = "VR controls", Location = new Point(18, 78), Size = new Size(343, 132), TabIndex = 2 };
-        var gaze = Option(group, "Select limbs with eye tracking", 25, options.Gaze);
-        var reach = Option(group, "Move limbs with controller motion", 58, options.Reach);
-        var markers = Option(group, "Place route markers while scouting", 91, options.Markers);
-        choices = new Control[] { normal, vr, gaze, reach, markers };
+        var movement = new GroupBox { Text = "Limb movement in VR", Location = new Point(18, 76), Size = new Size(343, 120), TabIndex = 2 };
+        var stick = ReachMode(movement, "Thumbstick", 23, !options.Reach && !options.Point);
+        var reach = ReachMode(movement, "Move the controller while gripping", 53, options.Reach);
+        var point = ReachMode(movement, "Point at the rock while gripping", 83, options.Point);
+        var group = new GroupBox { Text = "VR controls", Location = new Point(18, 203), Size = new Size(343, 121), TabIndex = 3 };
+        var gaze = Option(group, "Select limbs with eye tracking", 23, options.Gaze);
+        var markers = Option(group, "Place route markers while scouting", 53, options.Markers);
+        var handed = Option(group, "Use left hand to reach and mark routes", 83, options.LeftHanded);
+        choices = new Control[] { normal, vr, stick, reach, point, gaze, markers, handed };
         normal.Click += delegate { Vr = false; DialogResult = DialogResult.OK; };
         vr.Click += delegate { Vr = true; DialogResult = DialogResult.OK; };
         FormClosing += delegate
         {
             options.Gaze = gaze.Checked;
             options.Reach = reach.Checked;
+            options.Point = point.Checked;
+            options.LeftHanded = handed.Checked;
             options.Markers = markers.Checked;
         };
-        Controls.AddRange(new Control[] { normal, vr, group });
+        Controls.AddRange(new Control[] { normal, vr, movement, group });
         Shown += delegate { normal.Focus(); };
         KeyPreview = true;
         KeyDown += delegate(object sender, KeyEventArgs e)
@@ -178,6 +189,14 @@ internal sealed class ModeChooser : Form
         };
         gamepad.Tick += Poll;
         gamepad.Start();
+    }
+
+    private static RadioButton ReachMode(Control parent, string label, int top, bool value)
+    {
+        var radio = new RadioButton { Text = label, Left = 13, Top = top, Width = 320, Height = 26,
+            Checked = value, TabIndex = parent.Controls.Count };
+        parent.Controls.Add(radio);
+        return radio;
     }
 
     private static CheckBox Option(Control group, string label, int top, bool value)
@@ -210,8 +229,9 @@ internal sealed class ModeChooser : Form
             {
                 var button = choices[selected] as Button;
                 if (button != null) { button.PerformClick(); return; }
-                var box = (CheckBox)choices[selected];
-                box.Checked = !box.Checked;
+                var box = choices[selected] as CheckBox;
+                if (box != null) box.Checked = !box.Checked;
+                else ((RadioButton)choices[selected]).Checked = true;
             }
             else if ((pressed & (2 | 8)) != 0) choices[(selected + 1) % choices.Length].Focus();
             else if ((pressed & (1 | 4)) != 0) choices[(selected + choices.Length - 1) % choices.Length].Focus();

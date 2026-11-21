@@ -17,7 +17,8 @@ public class Game {
     public static int Main(string[] args) {
         using (var log = File.CreateText("launch-result.txt")) {
             foreach (var key in new[] {"CAIRN_VR", "DOORSTOP_DISABLE", "XR_API_LAYER_PATH",
-                    "XR_ENABLE_API_LAYERS", "CAIRNVR_GAZE", "CAIRNVR_REACH", "CAIRNVR_MARKERS"}) {
+                    "XR_ENABLE_API_LAYERS", "CAIRNVR_GAZE", "CAIRNVR_REACH", "CAIRNVR_MARKERS",
+                    "CAIRNVR_POINT", "CAIRNVR_LEFTHANDED"}) {
                 log.WriteLine(key + "=" + Environment.GetEnvironmentVariable(key));
             }
             foreach (var arg in args) log.WriteLine("arg=" + arg);
@@ -40,7 +41,7 @@ class LauncherTests(unittest.TestCase):
             subprocess.run([WIN_CSC, "/nologo", "/target:winexe", "/out:" + str(game), source], check=True)
             profile = stage / "CairnVR"
             profile.mkdir()
-            (profile / "controls.ini").write_text("gaze=1\nreach=0\nmarkers=1\n")
+            (profile / "controls.ini").write_text("gaze=1\nreach=1\npoint=1\nlefthanded=1\nmarkers=1\n")
             env = dict(os.environ, LOCALAPPDATA=str(stage), DOORSTOP_DISABLE="test",
                        XR_ENABLE_API_LAYERS="testlayer", XR_API_LAYER_PATH="existing")
             arguments = ["", "folder with space\\", 'a"b', "-flag", "x&y", "a%b"]
@@ -57,6 +58,8 @@ class LauncherTests(unittest.TestCase):
                     self.assertIn("XR_ENABLE_API_LAYERS=XR_APILAYER_CAIRN_controls;testlayer", lines)
                     self.assertIn("CAIRNVR_GAZE=1", lines)
                     self.assertIn("CAIRNVR_REACH=0", lines)
+                    self.assertIn("CAIRNVR_POINT=1", lines)
+                    self.assertIn("CAIRNVR_LEFTHANDED=1", lines)
                     self.assertIn("CAIRNVR_MARKERS=1", lines)
                     self.assertIn("XR_API_LAYER_PATH=" + str(stage / r"BepInEx\plugins\CairnVR\openxr") + ";existing", lines)
                 else:
