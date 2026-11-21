@@ -66,6 +66,8 @@ public sealed class StereoView : MonoBehaviour
 {
     public StereoView(IntPtr ptr) : base(ptr) { }
     public static event Action<Camera> BeforeEyeRender, AfterEyeRender;
+    // Both eyes and the screen-space UI share this frame's pose in tracking space.
+    public static Pose TrackedHeadPose { get; private set; }
     public static void Recenter() => recenterRequested = true;
     private static bool recenterRequested;
     private readonly Camera[] eyes = new Camera[2];
@@ -226,6 +228,7 @@ public sealed class StereoView : MonoBehaviour
         float now = Time.realtimeSinceStartup;
         var head = (tracking[0].Position + tracking[1].Position) * .5f;
         var headRotation = Quaternion.Slerp(tracking[0].Rotation, tracking[1].Rotation, .5f);
+        TrackedHeadPose = new Pose { position = head, rotation = headRotation };
         if (!centered || recenterRequested)
         {
             neutralHead = head;

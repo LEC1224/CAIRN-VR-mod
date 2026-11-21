@@ -6,11 +6,15 @@ using Object = UnityEngine.Object;
 
 namespace CairnVR.Hud;
 
-[BepInPlugin("local.cairnvr.hud", "CAIRN VR menus and subtitles", "1.0.0")]
+[BepInPlugin("local.cairnvr.hud", "CAIRN VR menus and subtitles", "1.1.0")]
 public sealed class HudPlugin : BasePlugin
 {
+    private const float PanelDistance = 2.4f;
+    private const float HalfWidth = 1.4f;
+    private const float HalfHeight = HalfWidth * 900f / 1600f;
     private Camera captureCamera;
     private RenderTexture surface;
+    private Func<Pose> trackedHeadPose;
     private Canvas[] canvases = Array.Empty<Canvas>();
     private readonly List<(Canvas canvas, RenderMode mode, Camera camera, float distance)> redirected = new();
     private int capturedFrame = -1;
@@ -41,6 +45,7 @@ public sealed class HudPlugin : BasePlugin
     private void Subscribe(Assembly assembly)
     {
         var type = assembly.GetType("CairnVR.CameraRig.StereoView", true);
+        trackedHeadPose = type.GetProperty("TrackedHeadPose").GetMethod.CreateDelegate<Func<Pose>>();
         type.GetEvent("AfterEyeRender").AddEventHandler(null, (Action<Camera>)Composite);
         Log.LogInfo("Attached game UI to stereo rendering.");
     }
@@ -122,25 +127,12 @@ public sealed class HudPlugin : BasePlugin
             capturedFrame = Time.frameCount;
             CaptureCanvas();
         }
-        if (lastCanvasCount > 0)
-        {
-            var rig = eye.transform.parent;
-            // Seat the panel at the player's eye height, with a shared center for both eyes.
-            var origin = rig.TransformPoint(new Vector3(0f, eye.transform.localPosition.y, 2.4f));
-            var right = rig.right * 1.40f * rig.lossyScale.x;
-            var up = rig.up * 0.7875f * rig.lossyScale.y;
-            var bl = eye.WorldToViewportPoint(origin - right - up);
-            var tl = eye.WorldToViewportPoint(origin - right + up);
-            var tr = eye.WorldToViewportPoint(origin + right + up);
-            var br = eye.WorldToViewportPoint(origin + right - up);
-            if (Mathf.Min(Mathf.Min(bl.z, tl.z), Mathf.Min(br.z, tr.z)) > 0.01f)
-                DrawPanel(eye.targetTexture, bl, tl, tr, br);
-        }
+        if (lastCanvasCount > 0) DrawPanel(eye, trackedHeadPose());
         CaptureDiagnostic(eye);
     }
 
     private Material panelMaterial;
-    private void DrawPanel(RenderTexture target, Vector3 bl, Vector3 tl, Vector3 tr, Vector3 br)
+    private void DrawPanel(Camera eye, Pose head)
     {
         if (panelMaterial == null)
         {
@@ -149,19 +141,28 @@ public sealed class HudPlugin : BasePlugin
             panelMaterial = new Material(shader);
             panelMaterial.mainTexture = surface;
         }
+        // Express the shared head plane in eye space, retaining IPD, cant and optical offsets.
+        // Both source poses are tracking-local even when the game camera moves around the mountain.
+        var toEye = Quaternion.Inverse(eye.transform.localRotation);
+        var headToEye = Matrix4x4.TRS(toEye * (head.position - eye.transform.localPosition),
+            toEye * head.rotation, Vector3.one);
+        var projection = eye.projectionMatrix;
+        // Keep screen-space menus visible over the scene. Preserve clip W for perspective-correct UVs.
+        projection.SetRow(2, projection.GetRow(3) * -.9999f);
         var previous = RenderTexture.active;
-        RenderTexture.active = target;
+        RenderTexture.active = eye.targetTexture;
         GL.PushMatrix();
         try
         {
-            GL.LoadOrtho();
             if (!panelMaterial.SetPass(0)) return;
+            GL.modelview = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * headToEye;
+            GL.LoadProjectionMatrix(projection);
             GL.Begin(GL.QUADS);
             GL.Color(Color.white);
-            Vertex(bl, 0, 0);
-            Vertex(tl, 0, 1);
-            Vertex(tr, 1, 1);
-            Vertex(br, 1, 0);
+            Vertex(-HalfWidth, -HalfHeight, 0, 0);
+            Vertex(-HalfWidth, HalfHeight, 0, 1);
+            Vertex(HalfWidth, HalfHeight, 1, 1);
+            Vertex(HalfWidth, -HalfHeight, 1, 0);
             GL.End();
         }
         finally
@@ -171,10 +172,10 @@ public sealed class HudPlugin : BasePlugin
         }
     }
 
-    private static void Vertex(Vector3 point, float u, float v)
+    private static void Vertex(float x, float y, float u, float v)
     {
         GL.TexCoord2(u, v);
-        GL.Vertex3(point.x, point.y, 0f);
+        GL.Vertex3(x, y, PanelDistance);
     }
 
     private void CaptureDiagnostic(Camera eye)
