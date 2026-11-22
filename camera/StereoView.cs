@@ -35,6 +35,7 @@ public sealed class CameraPlugin : BasePlugin
         NativeLibrary.Load(Path.Combine(BinaryDirectory, "openxr_loader.dll"));
         NativeLibrary.Load(Path.Combine(BinaryDirectory, "CairnVRStereo.dll"));
         EyeLighting.Install();
+        EyeClouds.Install();
         AddComponent<StereoView>();
         Log.LogInfo("CAIRN VR camera loaded. Waiting for the local OpenXR runtime.");
     }
@@ -386,7 +387,7 @@ public sealed class StereoView : MonoBehaviour
                 return;
             }
             BeforeEyeRender?.Invoke(eye);
-            EyeLighting.Render(eye, source);
+            EyeClouds.Render(eye, source);
             AfterEyeRender?.Invoke(eye);
             if (fade > .001f) DrawFade(images[index], fade);
             // Lighting, depth reconstruction, culling and the UI all see the
@@ -435,6 +436,7 @@ public sealed class StereoView : MonoBehaviour
     private void Close()
     {
         if (opened) Native.vr_close();
+        EyeClouds.Release();
         RestoreAudio();
         if (fadeMaterial) Object.Destroy(fadeMaterial);
         opened = false; centered = false; hasAnchor = false; wasFalling = false; reportedFrame = false;

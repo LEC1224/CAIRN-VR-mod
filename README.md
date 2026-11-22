@@ -56,6 +56,8 @@ Windows verification used Steam's actual Play action for both modes. With a proc
 
 The UI and lighting update was tested in the installed game using simulated head and controller poses. The menu stayed within one pixel of its position in each eye during rotation and leaning. During a 20° turn, the bright summit and foreground rock highlight followed the scenery. Controller silhouettes matched the projection of Valve's model to within one pixel in the tested poses. Tests using isolated tutorial records exercised the default X prompt, a remap to Y, and gaze and manual limb hints without advancing a player save.
 
+In VR, the upper weather clouds use the distance from the viewer to the cloud to determine their opacity. Cave shading uses a separate mask for each eye. To check these effects, the installed game rendered the same frozen weather through head turns and tilts. The tests also tracked the sun and its halo under a clear sky and placed a temporary cave volume over a test surface.
+
 During PC streaming, the player confirmed that the mountain and CAIRN’s main menu were visible inside the Steam Frame. Gaze selection and controller-guided limb placement during a climb, comfort during play and standalone performance still need playtesting.
 
 In a separate diagnostic, SteamVR loaded the controller and gaze bindings, entered the OpenXR Visible state and accepted 442 stereo frames at 3036 × 3036 per eye. CAIRN kept running when SteamVR returned to standby. This diagnostic temporarily allowed rendering in standby and then restored SteamVR's original setting. The renderer uses a separate D3D11 device for SteamVR to avoid a startup stall observed on the test PC's RTX 3080.
