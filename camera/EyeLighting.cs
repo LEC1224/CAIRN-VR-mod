@@ -11,6 +11,9 @@ internal static class EyeLighting
     private static Camera renderingEye;
     private static Camera gameplayCamera;
     private static bool reported;
+    private static bool caveHookInstalled;
+    private static CaveVolumesManager eyeCaves;
+    private static int caveTextureId, ignoreCavesId;
 
     internal static void Install()
     {
@@ -29,14 +32,99 @@ internal static class EyeLighting
             harmony.UnpatchSelf();
             CameraPlugin.Logger.LogWarning($"Per-eye CAIRN lighting is unavailable on this build: {ex}");
         }
+        var caves = new Harmony("community.cairnvr.camera.caves");
+        try
+        {
+            caveTextureId = Shader.PropertyToID("_Caves2D");
+            ignoreCavesId = Shader.PropertyToID("_IgnoreCaves2D");
+            void CavePrefix(string method, string patch) => caves.Patch(AccessTools.Method(typeof(CaveVolumesManager), method),
+                prefix: new HarmonyMethod(typeof(EyeLighting), patch));
+            CavePrefix(nameof(CaveVolumesManager.IsValidCamera), nameof(AcceptCaveView));
+            CavePrefix(nameof(CaveVolumesManager.UpdateCaveBuffers), nameof(AllowGameplayCaveQueries));
+            caves.Patch(AccessTools.Method(typeof(CaveVolumesManager), nameof(CaveVolumesManager.BuildCommandBuffer)),
+                postfix: new HarmonyMethod(typeof(EyeLighting), nameof(CorrectCaveProjection)));
+            caveHookInstalled = true;
+        }
+        catch (Exception ex)
+        {
+            caves.UnpatchSelf();
+            CameraPlugin.Logger.LogWarning($"Per-eye cave shading is unavailable on this build: {ex}");
+        }
     }
 
     internal static void Render(Camera eye, Camera source)
     {
         renderingEye = eye;
         gameplayCamera = source;
-        try { eye.Render(); }
+        try
+        {
+            if (caveHookInstalled) RenderWithCaveMask(eye, source);
+            else eye.Render();
+        }
         finally { renderingEye = null; gameplayCamera = null; }
+    }
+
+    private static void RenderWithCaveMask(Camera eye, Camera source)
+    {
+        var manager = CaveVolumesManager.Instance;
+        var desktopMask = manager ? manager.caves2dTex : null;
+        var previousIgnore = Shader.GetGlobalInt(ignoreCavesId);
+        RenderTexture eyeMask = null;
+        Texture previousTexture = null;
+        try
+        {
+            // The game's projected cave texture remains globally bound after the
+            // desktop camera finishes. Ignore it until this eye draws its own.
+            Shader.SetGlobalInt(ignoreCavesId, 1);
+            if (manager && manager.isActiveAndEnabled && desktopMask && source && !source.orthographic &&
+                CaveVolumesManager.caveRenderingEnabled && CaveVolumesManager.caveVolumesCount > 0 &&
+                manager.IsValidCamera(source))
+            {
+                previousTexture = Shader.GetGlobalTexture(caveTextureId);
+                eyeMask = RenderTexture.GetTemporary(desktopMask.descriptor);
+                eyeMask.filterMode = desktopMask.filterMode;
+                eyeMask.wrapMode = desktopMask.wrapMode;
+                manager.caves2dTex = eyeMask;
+                eyeCaves = manager;
+            }
+            eye.Render();
+        }
+        finally
+        {
+            eyeCaves = null;
+            if (eyeMask)
+            {
+                if (manager) manager.caves2dTex = desktopMask;
+                Shader.SetGlobalTexture(caveTextureId, previousTexture);
+                RenderTexture.ReleaseTemporary(eyeMask);
+            }
+            Shader.SetGlobalInt(ignoreCavesId, previousIgnore);
+        }
+    }
+
+    private static bool AcceptCaveView(CaveVolumesManager __instance, Camera __0, ref bool __result)
+    {
+        if (!IsEye(__0)) return true;
+        __result = eyeCaves != null && __instance.Pointer == eyeCaves.Pointer;
+        return false;
+    }
+
+    // CAIRN also reads cave attenuation back to gameplay from its visible
+    // volume list. Let the gameplay camera do that work once with its own view.
+    private static bool AllowGameplayCaveQueries() => eyeCaves == null || !IsEye(Camera.current);
+
+    private static void CorrectCaveProjection(CaveVolumesManager __instance, Camera __0)
+    {
+        if (eyeCaves == null || !IsEye(__0)) return;
+        // The game's cave shader subtracts the projection-center offsets when
+        // reconstructing a depth sample. With Unity's negative view Z the
+        // inverse must add them. Correct that term in the shader's view basis.
+        var p = __0.projectionMatrix;
+        var toWorld = __0.cameraToWorldMatrix;
+        var z = toWorld.GetColumn(2) - (2f * p.m02 / p.m00) * toWorld.GetColumn(0)
+            - (2f * p.m12 / p.m11) * toWorld.GetColumn(1);
+        toWorld.SetColumn(2, z);
+        __instance.screenSpaceMaterial.SetMatrix(CaveVolumesManager.sid_InverseView, toWorld);
     }
 
     private static bool IsEye(Camera camera) =>
