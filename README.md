@@ -18,7 +18,7 @@ In the tutorial, look at your controllers for the current lesson's button labels
 | --- | --- |
 | Standard climbing | Use CAIRN's usual sticks, buttons and grab control. You can use the Frame controllers or a separate gamepad. |
 | Eye selection | Enable **Select limbs with eye tracking**. Look at one visible hand or foot. When the target indicator appears, squeeze the non-reaching hand's grip to start reaching with that limb. If two endpoints overlap, change your viewing angle. The runtime must supply eye gaze. Manual limb selection is always available. |
-| Controller movement | Select the controller movement option. After selecting a limb, hold the reaching hand's grip and move that controller up, down or sideways. Release the grip to reposition your hand. Use CAIRN's usual grab control to place the limb. |
+| Controller movement | At the wall, hold the reaching hand's grip and move that controller up, down or sideways. CAIRN can choose the limb from your first movement, or you can select one yourself. Release the grip to reposition your hand. Use CAIRN's usual grab control to place the limb. |
 | Pointed reach | Choose **Point at the rock while gripping**. With a limb selected, hold the reaching hand's grip and point at the intended spot. Release the grip to fine-tune with the stick, then use the usual grab control. CAIRN determines reach and whether the hold works. |
 | Route markers | Enable **Place route markers while scouting**. In Eagle Eye, aim at the rock and squeeze the reaching hand's grip to place a mark. Point at the same mark and squeeze again to remove it. Up to eight markers last for the current scene. |
 | Handedness | The right hand reaches by default. **Use left hand to reach and mark routes** swaps the two gesture roles. |

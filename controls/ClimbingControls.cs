@@ -73,11 +73,14 @@ public sealed class ClimbingControls : MonoBehaviour
                 recenter?.Invoke();
                 recenterStart = float.PositiveInfinity;
             }
-            clutch = false;
-            gamepad.Apply(sample, null);
-            return;
+            if (float.IsPositiveInfinity(recenterStart))
+            {
+                clutch = false;
+                gamepad.Apply(sample, null);
+                return;
+            }
         }
-        recenterStart = -1;
+        else recenterStart = -1;
 
         bool limbControls = ControlsPlugin.Gaze || ControlsPlugin.Reach || ControlsPlugin.Point;
         if (!(limbControls || ControlsPlugin.Markers)) { gamepad.Apply(sample, null); return; }
@@ -107,12 +110,15 @@ public sealed class ClimbingControls : MonoBehaviour
         }
 
         Vector2? motion = null;
-        bool canReach = (ControlsPlugin.Reach || ControlsPlugin.Point) && climbing && (sample.Valid & 2) != 0 &&
-            pawn!.CurrentModule != null && pawn.CurrentModule.Pointer == pawn.ReachingModule.Pointer;
+        var module = climbing ? pawn.CurrentModule : null;
+        // CAIRN reads the first movement in Idle to choose and free a limb.
+        // Keep the same grip origin when that movement switches it to Reaching.
+        bool canReach = (ControlsPlugin.Reach || ControlsPlugin.Point) && (sample.Valid & 2) != 0 && module != null &&
+            (module.Pointer == pawn.IdleModule?.Pointer || module.Pointer == pawn.ReachingModule?.Pointer);
         if (!canReach || (sample.Pressed & 2) == 0) clutch = false;
         else
         {
-            if ((down & 2) != 0)
+            if (!clutch)
             {
                 var basis = Camera.main;
                 gripStart = sample.Grip.Position;
@@ -120,19 +126,19 @@ public sealed class ClimbingControls : MonoBehaviour
                 axisY = basis ? origin!.InverseTransformDirection(basis.transform.up).normalized : Vector3.up;
                 clutch = true;
             }
-            if (clutch && ControlsPlugin.Point)
+            if (ControlsPlugin.Point)
             {
                 // Project the direction towards the visible surface into the same screen axes
                 // used by the gamepad. CAIRN still owns IK, hold acceptance, and contact.
                 motion = Vector2.zero;
-                var reaching = pawn.ReachingModule.ReachingLimb;
-                if ((sample.Valid & 4) != 0 && reaching != null)
+                var reaching = module.Pointer == pawn.ReachingModule.Pointer ? pawn.ReachingModule.ReachingLimb : null;
+                if ((sample.Valid & 4) != 0 && (reaching != null || pawn.bodyHandler != null))
                 {
                     var ray = WorldRay(sample.Aim);
                     if (Physics.Raycast(ray, out var hit, 100f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
                         && !hit.transform.IsChildOf(((Component)pawn).transform))
                     {
-                        var offset = hit.point - reaching.CurrentIKTargetPosition;
+                        var offset = hit.point - (reaching != null ? reaching.CurrentIKTargetPosition : pawn.bodyHandler.BodyPosition);
                         PlaceCue(hit.point + .01f * hit.normal, ray.origin);
                         var horizontal = origin.TransformDirection(axisX);
                         var vertical = origin.TransformDirection(axisY);
@@ -141,7 +147,7 @@ public sealed class ClimbingControls : MonoBehaviour
                     }
                 }
             }
-            else if (clutch)
+            else
             {
                 var delta = sample.Grip.Position - gripStart;
                 var stick = new Vector2(Vector3.Dot(delta, axisX), Vector3.Dot(delta, axisY)) / ControlsPlugin.MotionRange;
