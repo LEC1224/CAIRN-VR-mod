@@ -24,7 +24,7 @@ In the tutorial, look at your controllers for the current lesson's button labels
 | Handedness | The right hand reaches by default. **Use left hand to reach and mark routes** swaps the two gesture roles. |
 | Recenter | Sit or stand as you intend to play, face forward and hold both grips for about one second, or press **F8** on the PC. |
 
-The camera can steady the viewpoint through falls and fade when the headset would enter rock. Settings for these behaviors, eye resolution and head-oriented audio are in `BepInEx/config/community.cairnvr.camera.cfg` after the first VR launch. Gesture sensitivity and the recenter chord are in `BepInEx/config/cairn.vr.controls.cfg`. If performance is uneven, reduce the camera's `RenderScale` and relaunch. If the headset stays in SteamVR Home, check the status on the game's desktop window and the plugin messages in `BepInEx/LogOutput.log`.
+The camera can steady the viewpoint through falls and fade when the headset would enter rock. Settings for these behaviors, eye resolution and head-oriented audio are in `BepInEx/config/community.cairnvr.camera.cfg` after the first VR launch. `MaxEyeDimension` defaults to 1600 pixels on the longest edge. Both eyes keep their optical proportions. Lower this value and relaunch if frame pacing is uneven. Raise it for more detail, or set it to 0 to use SteamVR’s recommended dimensions multiplied by `RenderScale`. The plugin log records the requested and actual eye sizes. Gesture sensitivity and the recenter chord are in `BepInEx/config/cairn.vr.controls.cfg`. If the headset stays in SteamVR Home, check the status on the game's desktop window and the plugin messages in `BepInEx/LogOutput.log`.
 
 ## Reinstalling on Windows
 
@@ -53,6 +53,8 @@ The Windows build targets Steam app 1588550, build 26753169, Unity 6000.0.72f1, 
 On Windows with .NET SDK, Visual Studio x64 C++ build tools, Git and the MinGW-w64 x64 C compiler available, run `.\package.ps1`. For another Steam library pass `-GameDir 'D:\SteamLibrary\steamapps\common\Cairn'`. The package is written to `dist/CairnVR.zip`.
 
 Windows verification used Steam's actual Play action for both modes. With a process-local test OpenXR runtime, the game submitted distinct left- and right-eye images, rendered its mountain and menu text, received gaze and hand poses, and accepted a simulated controller button to enter its main menu.
+
+An RTX 3080 test ran for 12 minutes in the climbing gym with the desktop at 2560 × 1440. The test runtime requested 3036 × 3036 per eye and received 1600 × 1600. Controller motion started a reach from rest, moved the selected hand and placed it using the game's grab button. The body and outfit matched the desktop pose in all 5,760 sampled frames. The PC submitted stereo frames throughout the run. This test used simulated tracking.
 
 The UI and lighting update was tested in the installed game using simulated head and controller poses. The menu stayed within one pixel of its position in each eye during rotation and leaning. During a 20° turn, the bright summit and foreground rock highlight followed the scenery. Controller silhouettes matched the projection of Valve's model to within one pixel in the tested poses. Tests using isolated tutorial records exercised the default X prompt, a remap to Y, and gaze and manual limb hints without advancing a player save.
 

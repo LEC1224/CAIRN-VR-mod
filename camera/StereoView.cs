@@ -20,6 +20,7 @@ public sealed class CameraPlugin : BasePlugin
 {
     internal static ManualLogSource Logger;
     internal static ConfigEntry<float> RenderScale;
+    internal static ConfigEntry<int> MaxEyeDimension;
     internal static ConfigEntry<bool> SteadyFalls, FollowAudio, FlipY, LeanFade, LookAssist, StickRecenter;
     internal static string BinaryDirectory;
 
@@ -27,7 +28,8 @@ public sealed class CameraPlugin : BasePlugin
     {
         if (Environment.GetEnvironmentVariable("CAIRN_VR") != "1") return;
         Logger = Log;
-        RenderScale = Config.Bind("Display", "RenderScale", 1f, "Multiplier for each runtime-recommended eye resolution (0.4 to 1.5).");
+        RenderScale = Config.Bind("Display", "RenderScale", 1f, "Multiplier for the runtime-recommended eye resolution (0.4 to 1.5), subject to MaxEyeDimension.");
+        MaxEyeDimension = Config.Bind("Display", "MaxEyeDimension", 1600, "Longest edge in pixels across the two eyes after scaling. Set to 0 for the full scaled runtime recommendation.");
         SteadyFalls = Config.Bind("Comfort", "StableFalls", true, "Hold the viewing position during falls and rewinds, then fade through black to the new position.");
         LeanFade = Config.Bind("Comfort", "FadeNearRock", true, "Darken the view as a physical head lean reaches solid scenery.");
         LookAssist = Config.Bind("Comfort", "KeepClimberInView", true, "Gently follow steep camera aim so the climber stays in view. Turning this off keeps neutral pitch level.");
@@ -48,7 +50,7 @@ internal static class Native
 {
     internal const string Dll = "CairnVRStereo";
     [StructLayout(LayoutKind.Sequential)]
-    internal struct Display { public int leftWidth, rightWidth, leftHeight, rightHeight, format; }
+    internal struct Display { public int leftWidth, rightWidth, leftHeight, rightHeight, format, recommendedWidth, recommendedHeight; }
     [StructLayout(LayoutKind.Sequential)]
     internal struct Tracking
     {
@@ -56,7 +58,8 @@ internal static class Native
         public Vector3 Position => new(px, py, -pz);
         public Quaternion Rotation => new(-x, -y, z, w);
     }
-    [DllImport(Dll)] internal static extern int vr_open(IntPtr texture, float scale, out Display display);
+    [DllImport(Dll)] internal static extern int vr_open(IntPtr texture, float scale, int maxDimension, out Display display);
+    [DllImport(Dll)] internal static extern int vr_graphics_lost();
     [DllImport(Dll)] internal static extern int vr_frame([Out] Tracking[] views);
     [DllImport(Dll)] internal static extern int vr_queue(IntPtr left, IntPtr right);
     [DllImport(Dll)] internal static extern IntPtr vr_submit_event();
@@ -89,7 +92,7 @@ public sealed class StereoView : MonoBehaviour
     private Material fadeMaterial;
     private Transform adjustedListener;
     private Quaternion originalAudio, adjustedAudio;
-    private bool opened, centered, wasFalling, hasAnchor, reportedFrame;
+    private bool opened, centered, wasFalling, hasAnchor, reportedFrame, graphicsLost;
     private string previousError;
     private Vector3 neutralHead, anchor;
     private Quaternion neutralRotation, anchorRotation;
@@ -115,6 +118,7 @@ public sealed class StereoView : MonoBehaviour
     // once Unity has finished the same animated pose used by the desktop view.
     private void RenderStereoFrame()
     {
+        if (graphicsLost) return;
         if (Application.isFocused && Keyboard.current?.f8Key.wasPressedThisFrame == true) Recenter();
         var pad = Gamepad.current;
         if (CameraPlugin.StickRecenter.Value && Application.isFocused && pad != null &&
@@ -156,6 +160,7 @@ public sealed class StereoView : MonoBehaviour
         catch (Exception ex)
         {
             Report(ex.ToString());
+            graphicsLost = Native.vr_graphics_lost() != 0;
             Close();
             nextAttempt = Time.realtimeSinceStartup + 3;
         }
@@ -206,8 +211,10 @@ public sealed class StereoView : MonoBehaviour
             Report("CAIRN VR needs Direct3D 11. Launch with -force-d3d11.");
             return false;
         }
-        if (Native.vr_open(Texture2D.whiteTexture.GetNativeTexturePtr(), Mathf.Clamp(CameraPlugin.RenderScale.Value, .4f, 1.5f), out var display) == 0)
+        if (Native.vr_open(Texture2D.whiteTexture.GetNativeTexturePtr(), Mathf.Clamp(CameraPlugin.RenderScale.Value, .4f, 1.5f),
+            Mathf.Max(0, CameraPlugin.MaxEyeDimension.Value), out var display) == 0)
         {
+            graphicsLost = Native.vr_graphics_lost() != 0;
             Report(Native.Error());
             return false;
         }
@@ -243,7 +250,7 @@ public sealed class StereoView : MonoBehaviour
             textures[i] = submissions[i].GetNativeTexturePtr();
         }
         previousError = null;
-        CameraPlugin.Logger.LogInfo($"OpenXR stereo session created, left eye {display.leftWidth}x{display.leftHeight}, right eye {display.rightWidth}x{display.rightHeight}.");
+        CameraPlugin.Logger.LogInfo($"OpenXR stereo session created, left eye {display.leftWidth}x{display.leftHeight}, right eye {display.rightWidth}x{display.rightHeight}. Runtime recommendation for the left eye: {display.recommendedWidth}x{display.recommendedHeight}.");
         return true;
     }
 
@@ -255,6 +262,7 @@ public sealed class StereoView : MonoBehaviour
             : "Waiting for headset tracking. Connect or wake the headset and start your OpenXR runtime.";
         if (opened && lastState == 3)
             status = "The headset is connected. Put it on and return to CAIRN in the headset.";
+        if (graphicsLost) status = "CAIRN lost its graphics device. Quit and relaunch CAIRN to resume VR.";
         GUI.Box(new Rect(12, 12, Mathf.Min(580, Screen.width - 24), 54), "CAIRN VR\n" + status);
     }
 

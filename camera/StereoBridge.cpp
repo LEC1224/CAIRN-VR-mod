@@ -27,7 +27,7 @@ struct Eye {
     ComPtr<ID3D11Texture2D> source, fromUnity, forXR;
     ComPtr<IDXGIKeyedMutex> unityLock, xrLock;
 };
-struct Display { int width[2], height[2], format; };
+struct Display { int width[2], height[2], format, recommendedWidth, recommendedHeight; };
 struct Tracking { XrPosef pose; XrFovf fov; };
 std::mutex gate;
 std::string error;
@@ -40,7 +40,19 @@ XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 std::array<XrView,2> views{};
 std::array<Eye,2> eyes{};
 ComPtr<ID3D11DeviceContext> context, unityContext;
-ComPtr<ID3D11Device> displayDevice;
+ComPtr<ID3D11Device> displayDevice, unityDevice;
+std::atomic<bool> graphicsLost{};
+ULONGLONG nextDeviceCheck{};
+bool recordDeviceLoss() {
+    if(!unityDevice) return false;
+    HRESULT reason=unityDevice->GetDeviceRemovedReason();
+    if(SUCCEEDED(reason)) return false;
+    char message[128];
+    sprintf_s(message,"Unity D3D11 device lost (0x%08X). Relaunch CAIRN to resume VR.",static_cast<unsigned>(reason));
+    error=message;
+    graphicsLost=true;
+    return true;
+}
 void d3d(HRESULT hr, const char* action) {
     if(FAILED(hr)) throw std::runtime_error(std::string(action)+" failed: "+std::to_string(hr));
 }
@@ -120,37 +132,50 @@ void closeSession() {
     running=false; queued=false; queuedDraw=false;
     context.Reset();
     unityContext.Reset();
+    unityDevice.Reset();
     displayDevice.Reset();
     sessionState=XR_SESSION_STATE_UNKNOWN;
     ++eventId;
 }
-void copyEye(Eye& eye) {
-    uint32_t index=0;
-    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    check(xrAcquireSwapchainImage(eye.chain,&acquire,&index),"xrAcquireSwapchainImage");
-    XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wait.timeout=XR_INFINITE_DURATION;
-    check(xrWaitSwapchainImage(eye.chain,&wait),"xrWaitSwapchainImage");
-    lockSurface(eye.unityLock.Get(),0);
-    unityContext->CopyResource(eye.fromUnity.Get(),eye.source.Get());
+void copyEyes() {
+    uint32_t indices[2]{};
+    for(size_t i=0;i<eyes.size();++i) {
+        XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        check(xrAcquireSwapchainImage(eyes[i].chain,&acquire,&indices[i]),"xrAcquireSwapchainImage");
+        XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        wait.timeout=500'000'000; // nanoseconds
+        auto result=xrWaitSwapchainImage(eyes[i].chain,&wait);
+        if(result==XR_TIMEOUT_EXPIRED) throw std::runtime_error("OpenXR eye image wait timed out");
+        check(result,"xrWaitSwapchainImage");
+    }
+    for(auto& eye:eyes) {
+        lockSurface(eye.unityLock.Get(),0);
+        unityContext->CopyResource(eye.fromUnity.Get(),eye.source.Get());
+    }
     unityContext->Flush();
-    d3d(eye.unityLock->ReleaseSync(1),"offer rendered Unity image");
-    lockSurface(eye.xrLock.Get(),1);
-    context->CopyResource(eye.images.at(index).texture,eye.forXR.Get());
+    for(auto& eye:eyes) d3d(eye.unityLock->ReleaseSync(1),"offer rendered Unity image");
+    for(size_t i=0;i<eyes.size();++i) {
+        auto& eye=eyes[i];
+        lockSurface(eye.xrLock.Get(),1);
+        context->CopyResource(eye.images.at(indices[i]).texture,eye.forXR.Get());
+    }
     context->Flush();
-    d3d(eye.xrLock->ReleaseSync(0),"return rendered Unity image");
-    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    check(xrReleaseSwapchainImage(eye.chain,&release),"xrReleaseSwapchainImage");
+    for(auto& eye:eyes) {
+        d3d(eye.xrLock->ReleaseSync(0),"return rendered Unity image");
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        check(xrReleaseSwapchainImage(eye.chain,&release),"xrReleaseSwapchainImage");
+    }
 }
 void __stdcall submit(int token) {
     std::lock_guard guard(gate);
     if(!queued || static_cast<uint32_t>(token)!=eventId) return;
     queued=false;
     try {
-        if(queuedDraw) for(auto& eye:eyes) copyEye(eye);
+        if(queuedDraw) copyEyes();
         endFrame(queuedDraw);
     } catch(const std::exception& ex) {
         error=ex.what();
+        recordDeviceLoss();
         closeSession();
     }
 }
@@ -179,16 +204,17 @@ void poll() {
 }
 }
 
-API int vr_open(ID3D11Texture2D* texture,float scale,Display* display) {
+API int vr_open(ID3D11Texture2D* texture,float scale,int maxDimension,Display* display) {
     std::lock_guard guard(gate);
     closeSession();
     try {
         if(!texture || !display) throw std::runtime_error("Unity has no D3D11 texture");
-        ComPtr<ID3D11Device> device;
-        texture->GetDevice(&device);
-        device->GetImmediateContext(&unityContext);
+        texture->GetDevice(&unityDevice);
+        if(recordDeviceLoss()){closeSession();return 0;}
+        graphicsLost=false;
+        unityDevice->GetImmediateContext(&unityContext);
         ComPtr<IDXGIDevice> dxgi;
-        d3d(device.As(&dxgi),"identify Unity GPU");
+        d3d(unityDevice.As(&dxgi),"identify Unity GPU");
         ComPtr<IDXGIAdapter> adapter;
         d3d(dxgi->GetAdapter(&adapter),"get Unity adapter");
         d3d(D3D11CreateDevice(adapter.Get(),D3D_DRIVER_TYPE_UNKNOWN,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -232,11 +258,22 @@ API int vr_open(ID3D11Texture2D* texture,float scale,Display* display) {
         for(auto& c:configs) c.type=XR_TYPE_VIEW_CONFIGURATION_VIEW;
         check(xrEnumerateViewConfigurationViews(instance,systemId,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&n,configs.data()),"enumerate stereo views");
         if(n!=2) throw std::runtime_error("OpenXR did not supply two stereo views");
+        display->recommendedWidth=configs[0].recommendedImageRectWidth;
+        display->recommendedHeight=configs[0].recommendedImageRectHeight;
+        // Use one scale for both eyes, preserving asymmetry and aspect ratios.
+        for(const auto& c:configs) {
+            if(!c.recommendedImageRectWidth || !c.recommendedImageRectHeight)
+                throw std::runtime_error("OpenXR returned an empty recommended eye size");
+            scale=std::min({scale,static_cast<float>(c.maxImageRectWidth)/c.recommendedImageRectWidth,
+                static_cast<float>(c.maxImageRectHeight)/c.recommendedImageRectHeight});
+            if(maxDimension>0)
+                scale=std::min(scale,static_cast<float>(maxDimension)/std::max(c.recommendedImageRectWidth,c.recommendedImageRectHeight));
+        }
         for(int i=0;i<2;++i) {
             auto& e=eyes[i]; auto& c=configs[i];
             display->width[i]=e.width=std::clamp<int>(static_cast<int>(c.recommendedImageRectWidth*scale),1,c.maxImageRectWidth);
             display->height[i]=e.height=std::clamp<int>(static_cast<int>(c.recommendedImageRectHeight*scale),1,c.maxImageRectHeight);
-            makeBridge(e,device.Get(),static_cast<DXGI_FORMAT>(display->format));
+            makeBridge(e,unityDevice.Get(),static_cast<DXGI_FORMAT>(display->format));
             XrSwapchainCreateInfo sc{XR_TYPE_SWAPCHAIN_CREATE_INFO};
             sc.usageFlags=XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT|XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
             sc.format=display->format; sc.sampleCount=1; sc.width=e.width; sc.height=e.height; sc.faceCount=1; sc.arraySize=1; sc.mipCount=1;
@@ -248,7 +285,7 @@ API int vr_open(ID3D11Texture2D* texture,float scale,Display* display) {
         submitted=0; skipped=0;
         renderingNotRequested=0; trackingUnavailable=0; lastViewFlags=0;
         error.clear(); return 1;
-    } catch(const std::exception& ex) {error=ex.what();closeSession();return 0;}
+    } catch(const std::exception& ex) {error=ex.what();recordDeviceLoss();closeSession();return 0;}
 }
 API int vr_frame(Tracking* out) {
     // SteamVR may take time to finish GPU work in the render callback.
@@ -258,6 +295,11 @@ API int vr_frame(Tracking* out) {
     if(!session) return -1;
     if(queued || frameOpen) return 0;
     try {
+        auto now=GetTickCount64();
+        if(now>=nextDeviceCheck) {
+            nextDeviceCheck=now+1000;
+            if(recordDeviceLoss()){closeSession();return -1;}
+        }
         poll(); if(!running) return 0;
         XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO}; check(xrWaitFrame(session,&wi,&frame),"xrWaitFrame");
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO}; check(xrBeginFrame(session,&bi),"xrBeginFrame"); frameOpen=true;
@@ -272,7 +314,7 @@ API int vr_frame(Tracking* out) {
         if(count!=2 || (state.viewStateFlags & valid) != valid) { ++trackingUnavailable; return 2; }
         for(int i=0;i<2;++i) out[i]={views[i].pose,views[i].fov};
         return 1;
-    } catch(const std::exception& ex) {error=ex.what();closeSession();return -1;}
+    } catch(const std::exception& ex) {error=ex.what();recordDeviceLoss();closeSession();return -1;}
 }
 API int vr_queue(ID3D11Texture2D* left,ID3D11Texture2D* right) {
     std::lock_guard guard(gate);
@@ -283,6 +325,7 @@ API int vr_queue(ID3D11Texture2D* left,ID3D11Texture2D* right) {
     return static_cast<int>(++eventId);
 }
 API void* vr_submit_event() {return reinterpret_cast<void*>(&submit);}
+API int vr_graphics_lost() {return graphicsLost.load()?1:0;}
 API void vr_counts(uint32_t* drawn,uint32_t* empty) { *drawn=submitted.load(); *empty=skipped.load(); }
 API void vr_tracking_status(int32_t* state,uint32_t* notRequested,uint32_t* tracking,uint32_t* flags) {
     *state=sessionState.load(); *notRequested=renderingNotRequested.load();
