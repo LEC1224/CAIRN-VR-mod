@@ -63,13 +63,19 @@ public sealed class TutorialPlugin : BasePlugin
                 var callout = callouts[i] ??= new Callout(style);
                 callout.Set(hint.Text, style);
                 float side = onLeft ? -1 : 1;
-                var rowBase = hand.position + billboard * new Vector3(0, .044f + row * .047f, -.014f);
+                // Leave the space above the pad for its quick-inventory and face
+                // icons. Low-held controllers can put a lower row outside the eye.
+                float rowOffset = row * .047f;
+                var rowBase = hand.position + billboard * new Vector3(0, -.024f - rowOffset, -.014f);
+                if (referenceEye.WorldToViewportPoint(rowBase).y < .055f)
+                    rowBase = hand.position + billboard * new Vector3(0, .082f + rowOffset, -.014f);
                 var rightAxis = billboard * Vector3.right;
                 // Keep the entire label in view. Use one reference eye for both images so a
                 // label at the edge cannot flip to a different side in each eye.
-                var farEdge = referenceEye.WorldToViewportPoint(rowBase + rightAxis * (side * (.051f + callout.Width)));
+                const float sideGap = .065f;
+                var farEdge = referenceEye.WorldToViewportPoint(rowBase + rightAxis * (side * (sideGap + .003f + callout.Width)));
                 if (farEdge.x < .055f || farEdge.x > .945f) side = -side;
-                var tip = rowBase + rightAxis * (.048f * side);
+                var tip = rowBase + rightAxis * (sideGap * side);
                 Leader(anchor.position, tip);
                 callout.Draw(tip + rightAxis * (.003f * side), billboard, side < 0);
             }

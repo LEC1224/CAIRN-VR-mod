@@ -12,6 +12,8 @@ The chooser starts with thumbstick climbing and remembers your choices between s
 
 Both tracked controllers are visible during ordinary play. The mod reads the Steam Frame models and their physical button locations from the local SteamVR installation. A simplified model is available when the device model files are unavailable. Each controller disappears independently if tracking is lost.
 
+Look just above the Frame's D-pad for CAIRN's quick-inventory icons. With the game's default bindings, up is the piton, right is chalk, down is the backpack and left is the flask. The icons follow the current quick-inventory layer and your gamepad bindings. The A, B, X and Y caps match the colors of the game's button hints, with larger versions of the same letters floating above the pad.
+
 In the tutorial, look at your controllers for the current lesson's button labels. A ring marks the button and a line connects it to the instruction. The default **Start climbing** prompt points to **X** on the right Frame controller and follows the game's binding if you remap it. With eye selection enabled and gaze tracking active, the limb-selection lesson points to the non-reaching hand's grip. Controller movement, pointed reach and route-marking instructions depend on the options selected in the launcher. The labels reuse CAIRN's lettering and short localized instructions where available. The added VR gesture instructions are in English.
 
 | Control | How to use it |

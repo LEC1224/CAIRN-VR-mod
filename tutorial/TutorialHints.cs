@@ -122,7 +122,7 @@ internal sealed class TutorialHints
         for (int i = 0; i < bindings.Count; ++i)
         {
             var binding = bindings[i];
-            var control = ButtonFor(binding.effectivePath);
+            var control = ControllerModels.ButtonForBinding(binding.effectivePath);
             if (control == null) continue;
             string verb = caption ?? ActionLabel(action.name, action.actionMap?.name);
             string button = ButtonName(control);
@@ -138,29 +138,6 @@ internal sealed class TutorialHints
         for (int i = 0; i < Active.Count; ++i)
             if (Active[i].Control == control) return;
         Active.Add(new Hint(control, label));
-    }
-
-    internal static string ButtonFor(string path)
-    {
-        if (string.IsNullOrEmpty(path)) return null;
-        int separator = path.IndexOf(">/", StringComparison.Ordinal);
-        if (separator < 0 || !path.StartsWith("<", StringComparison.Ordinal)) return null;
-        string layout = path.Substring(1, separator - 1);
-        if (!(layout.Equals("Gamepad", StringComparison.OrdinalIgnoreCase) || layout.Contains("Gamepad", StringComparison.OrdinalIgnoreCase)
-            || layout.StartsWith("XInput", StringComparison.OrdinalIgnoreCase) || layout.StartsWith("DualShock", StringComparison.OrdinalIgnoreCase)
-            || layout.StartsWith("DualSense", StringComparison.OrdinalIgnoreCase))) return null;
-        string component = path.Substring(separator + 2).ToLowerInvariant();
-        if (component.StartsWith("leftstick/", StringComparison.Ordinal)) return "LeftStick";
-        if (component.StartsWith("rightstick/", StringComparison.Ordinal)) return "RightStick";
-        return component switch
-        {
-            "buttonsouth" or "a" => "A", "buttonwest" or "x" => "X",
-            "buttoneast" or "b" => "B", "buttonnorth" or "y" => "Y",
-            "dpad/up" => "Up", "dpad/down" => "Down", "dpad/left" => "Left", "dpad/right" => "Right",
-            "leftshoulder" => "LB", "rightshoulder" => "RB", "lefttrigger" => "LT", "righttrigger" => "RT",
-            "leftstick" => "LeftStick", "rightstick" => "RightStick", "leftstickpress" => "LeftStickPress", "rightstickpress" => "RightStickPress",
-            "start" or "startbutton" => "Menu", "select" or "selectbutton" => "View", _ => null
-        };
     }
 
     static string ButtonName(string control) => control switch

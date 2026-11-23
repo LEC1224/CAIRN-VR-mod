@@ -63,6 +63,7 @@ internal sealed class FrameModel
         var normals = new List<Vector3>();
         var uvs = new List<Vector2>();
         var triangles = new List<int>();
+        var surfaces = new List<(int end, Color32 paint)>();
         try
         {
             foreach (var part in components.EnumerateObject())
@@ -72,6 +73,7 @@ internal sealed class FrameModel
                 if (string.IsNullOrEmpty(filename) || Path.GetFileName(filename) != filename)
                     throw new InvalidDataException("Unexpected SteamVR render-model path.");
                 AppendObj(Path.Combine(dir, filename), vertices, normals, uvs, triangles);
+                surfaces.Add((triangles.Count, ControllerIcons.FacePaint(part.Name)));
                 if (part.Value.TryGetProperty("component_local", out var local))
                     model.Anchors[part.Name] = Position(local.GetProperty("origin"));
             }
@@ -83,13 +85,14 @@ internal sealed class FrameModel
             model.Mesh.triangles = triangles.ToArray();
             model.Mesh.RecalculateBounds();
             model.Mesh.UploadMeshData(true);
-            model.Atlas = ReadAtlas(Path.Combine(dir, name + "_color.png"), uvs, normals, triangles);
+            model.Atlas = ReadAtlas(Path.Combine(dir, name + "_color.png"), uvs, normals, triangles, surfaces);
             return model;
         }
         catch { model.Dispose(); throw; }
     }
 
-    static Texture2D ReadAtlas(string path, List<Vector2> uv, List<Vector3> normals, List<int> triangles)
+    static Texture2D ReadAtlas(string path, List<Vector2> uv, List<Vector3> normals, List<int> triangles,
+        List<(int end, Color32 paint)> surfaces)
     {
         var source = new Texture2D(2, 2, TextureFormat.RGBA32, true);
         try
@@ -101,20 +104,7 @@ internal sealed class FrameModel
             int mip = source.mipmapCount > 1 ? 1 : 0;
             Color32[] pixels = source.GetPixels32(mip).ToArray();
             int width = source.width >> mip, height = source.height >> mip;
-            var shades = MatteShading(uv, normals, triangles, width, height);
-            var colors = new Color32[256];
-            for (int i = 0; i < colors.Length; i++)
-            {
-                float t = Mathf.Sqrt(i / 255f);
-                colors[i] = new Color32((byte)(29 + 216 * t), (byte)(33 + 201 * t), (byte)(34 + 178 * t), 255);
-            }
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                var c = pixels[i];
-                var ink = colors[(c.r * 54 + c.g * 183 + c.b * 19) >> 8];
-                int shade = shades[i];
-                pixels[i] = new Color32((byte)(ink.r * shade / 255), (byte)(ink.g * shade / 255), (byte)(ink.b * shade / 255), 255);
-            }
+            ShadeAtlas(pixels, width, height, uv, normals, triangles, surfaces);
             var atlas = new Texture2D(width, height, TextureFormat.RGBA32, true)
             { hideFlags = HideFlags.DontUnloadUnusedAsset };
             atlas.SetPixels32(pixels);
@@ -124,12 +114,33 @@ internal sealed class FrameModel
         finally { Object.Destroy(source); }
     }
 
-    // Bake a matte fill from the authored vertex normals. This makes the trigger,
-    // thumbstick and face buttons readable without the game's view-dependent lights.
-    static byte[] MatteShading(List<Vector2> uv, List<Vector3> normals, List<int> faces, int width, int height)
+    static Color32[] InkRamp(Color32 paint)
     {
-        var shades = new byte[width * height];
-        Array.Fill(shades, (byte)185);
+        var colors = new Color32[256];
+        for (int i = 0; i < colors.Length; i++)
+        {
+            float t = Mathf.Sqrt(i / 255f);
+            colors[i] = Color32.Lerp(paint, new Color32(245, 234, 212, 255), t);
+        }
+        return colors;
+    }
+
+    static Color32 Shade(Color32 ink, int light) =>
+        new((byte)(ink.r * light / 255), (byte)(ink.g * light / 255), (byte)(ink.b * light / 255), 255);
+
+    // Bake the cap paint and matte lighting into the same atlas as the shell.
+    // Sampling the original ink keeps Valve's printed letters on the buttons.
+    static void ShadeAtlas(Color32[] pixels, int width, int height, List<Vector2> uv, List<Vector3> normals,
+        List<int> faces, List<(int end, Color32 paint)> surfaces)
+    {
+        var shellInk = InkRamp(new Color32(29, 33, 34, 255));
+        var tone = new byte[pixels.Length];
+        for (int i = 0; i < pixels.Length; ++i)
+        {
+            var c = pixels[i];
+            tone[i] = (byte)((c.r * 54 + c.g * 183 + c.b * 19) >> 8);
+            pixels[i] = Shade(shellInk[tone[i]], 185);
+        }
         var light = new float[normals.Count];
         for (int i = 0; i < light.Length; i++)
         {
@@ -137,14 +148,23 @@ internal sealed class FrameModel
             float dot = n.y * .82f - n.z * .43f - n.x * .38f;
             light[i] = 95 + 160 * Math.Clamp((dot + .40f) / 1.40f, 0f, 1f);
         }
-        for (int f = 0; f < faces.Count; f += 3)
+        int first = 0;
+        foreach (var surface in surfaces)
+        {
+            var ink = surface.paint.a == 0 ? shellInk : InkRamp(surface.paint);
+            for (int f = first; f < surface.end; f += 3)
+                Rasterize(f, ink);
+            first = surface.end;
+        }
+
+        void Rasterize(int f, Color32[] ink)
         {
             int a = faces[f], b = faces[f + 1], c = faces[f + 2];
             float ax = uv[a].x * width, ay = uv[a].y * height;
             float bx = uv[b].x * width, by = uv[b].y * height;
             float cx = uv[c].x * width, cy = uv[c].y * height;
             float det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
-            if (Math.Abs(det) < .0001f) continue;
+            if (Math.Abs(det) < .0001f) return;
             int y0 = Math.Max(0, (int)MathF.Floor(Math.Min(ay, Math.Min(by, cy))));
             int y1 = Math.Min(height - 1, (int)MathF.Ceiling(Math.Max(ay, Math.Max(by, cy))));
             int x0 = Math.Max(0, (int)MathF.Floor(Math.Min(ax, Math.Min(bx, cx))));
@@ -157,10 +177,12 @@ internal sealed class FrameModel
                     float wc = ((bx - ax) * dy - (by - ay) * dx) / det;
                     float wa = 1 - wb - wc;
                     if (wa >= 0 && wb >= 0 && wc >= 0)
-                        shades[y * width + x] = (byte)(wa * light[a] + wb * light[b] + wc * light[c]);
+                    {
+                        int pixel = y * width + x;
+                        pixels[pixel] = Shade(ink[tone[pixel]], (int)(wa * light[a] + wb * light[b] + wc * light[c]));
+                    }
                 }
         }
-        return shades;
     }
 
     static void AppendObj(string path, List<Vector3> vertices, List<Vector3> normals, List<Vector2> uv, List<int> faces)

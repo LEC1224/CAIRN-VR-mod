@@ -12,6 +12,9 @@ public static class ControllerModels
     static readonly Hand[] hands = new Hand[2];
     static readonly FrameModel[] frames = new FrameModel[2];
     static readonly bool[] attempted = new bool[2];
+    static readonly Dictionary<string, Material> faceCaps = new();
+    static ControllerIcons icons;
+    static Quaternion iconFacing;
     static EventInfo beforeEye, afterEye;
     public static event Action<Camera> AfterControllersRendered;
     static CommandBuffer drawCommands;
@@ -33,10 +36,34 @@ public static class ControllerModels
         return null;
     }
 
+    public static string ButtonForBinding(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        int separator = path.IndexOf(">/", StringComparison.Ordinal);
+        if (separator < 0 || !path.StartsWith("<", StringComparison.Ordinal)) return null;
+        string layout = path.Substring(1, separator - 1);
+        if (!(layout.Equals("Gamepad", StringComparison.OrdinalIgnoreCase) || layout.Contains("Gamepad", StringComparison.OrdinalIgnoreCase)
+            || layout.StartsWith("XInput", StringComparison.OrdinalIgnoreCase) || layout.StartsWith("DualShock", StringComparison.OrdinalIgnoreCase)
+            || layout.StartsWith("DualSense", StringComparison.OrdinalIgnoreCase))) return null;
+        string component = path.Substring(separator + 2).ToLowerInvariant();
+        if (component.StartsWith("leftstick/", StringComparison.Ordinal)) return "LeftStick";
+        if (component.StartsWith("rightstick/", StringComparison.Ordinal)) return "RightStick";
+        return component switch
+        {
+            "buttonsouth" or "a" => "A", "buttonwest" or "x" => "X",
+            "buttoneast" or "b" => "B", "buttonnorth" or "y" => "Y",
+            "dpad/up" => "Up", "dpad/down" => "Down", "dpad/left" => "Left", "dpad/right" => "Right",
+            "leftshoulder" => "LB", "rightshoulder" => "RB", "lefttrigger" => "LT", "righttrigger" => "RT",
+            "leftstick" => "LeftStick", "rightstick" => "RightStick", "leftstickpress" => "LeftStickPress", "rightstickpress" => "RightStickPress",
+            "start" or "startbutton" => "Menu", "select" or "selectbutton" => "View", _ => null
+        };
+    }
+
     public static bool GazeAvailable => ControlsPlugin.Gaze && Tracking.TryRead(out var s) && (s.Valid & 1u) != 0;
 
     internal static void Start()
     {
+        icons = new ControllerIcons();
         modelDirectory = FrameModel.FindModels();
         leftReaches = Environment.GetEnvironmentVariable("CAIRNVR_LEFTHANDED") == "1";
         var rig = Type.GetType("CairnVR.CameraRig.StereoView, CairnVR.Camera", true);
@@ -86,6 +113,12 @@ public static class ControllerModels
                     hand.Root.SetLocalPositionAndRotation(pose.Position, pose.Rotation);
                     hand.Tracked = true;
                 }
+                if (hands[0]?.Tracked == true || hands[1]?.Tracked == true)
+                {
+                    // Fix the layout for the stereo pair, including canted eye displays.
+                    iconFacing = eye.transform.rotation;
+                    icons.Refresh();
+                }
             }
             QueueDraws(eye);
         }
@@ -114,6 +147,9 @@ public static class ControllerModels
                 if (hand != null && hand.Tracked && hand.Root) hand.Draw(depthPass: true);
             foreach (var hand in hands)
                 if (hand != null && hand.Tracked && hand.Root) hand.Draw(depthPass: false);
+            foreach (var hand in hands)
+                if (hand != null && hand.Tracked && hand.Root)
+                    icons.Draw(hand.Anchors, hand.Root, hand.Frame, hand.PadCenter, iconFacing);
             AfterControllersRendered?.Invoke(eye);
         }
         finally { collecting = false; }
@@ -167,6 +203,7 @@ public static class ControllerModels
         internal readonly Transform Root;
         internal readonly Dictionary<string, Transform> Anchors = new();
         internal readonly bool Frame;
+        internal readonly Vector3 PadCenter;
         internal bool Tracked;
         readonly List<(Mesh mesh, Matrix4x4 local, Material mat)> parts = new();
         readonly bool right;
@@ -193,6 +230,15 @@ public static class ControllerModels
                 ControlsPlugin.Logger.LogInfo($"Loaded the Steam Frame {(right ? "right" : "left")} controller and its button anchors.");
             }
             else BuildFallback();
+            var center = Vector3.zero;
+            int count = 0;
+            foreach (var anchor in Anchors)
+                if (ControllerIcons.PadOffset(anchor.Key, frame, out _))
+                {
+                    center += anchor.Value.localPosition;
+                    count++;
+                }
+            if (count > 0) PadCenter = center / count;
         }
 
         void Anchor(string name, Vector3 pos)
@@ -235,7 +281,11 @@ public static class ControllerModels
                 => parts.Add((sphere, Matrix4x4.TRS(pos, Quaternion.Euler(tilt, 0, 0), size), material));
             void Button(string part, Vector3 pos, Vector3 size)
             {
-                Piece(pos, size, cap);
+                var material = cap;
+                var paint = ControllerIcons.FacePaint(part);
+                if (paint.a != 0 && !faceCaps.TryGetValue(part, out material))
+                    faceCaps[part] = material = Surface(paint);
+                Piece(pos, size, material);
                 AddAnchors(part, pos);
             }
             Piece(new Vector3(0, -.012f, -.018f), new Vector3(.039f, .05f, .115f), shell, -18);
@@ -282,6 +332,7 @@ public static class ControllerModels
         afterEye?.RemoveEventHandler(null, (Action<Camera>)Detach);
         Detach(null);
         drawCommands?.Release();
+        icons?.Dispose();
         for (int i = 0; i < hands.Length; i++)
         {
             hands[i]?.Dispose(); hands[i] = null;
@@ -289,6 +340,8 @@ public static class ControllerModels
         }
         if (shell) Object.Destroy(shell);
         if (cap) Object.Destroy(cap);
+        foreach (var material in faceCaps.Values) if (material) Object.Destroy(material);
+        faceCaps.Clear();
         if (depthOnly) Object.Destroy(depthOnly);
         if (sphere) Object.Destroy(sphere);
     }

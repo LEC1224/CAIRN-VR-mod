@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="$(BepInExPath)\interop\UnityEngine.ImageConversionModule.dll" Private="false" />
+    <Reference Include="$(BepInExPath)\interop\UnityEngine.UI.dll;$(BepInExPath)\interop\UnityEngine.UIModule.dll;$(BepInExPath)\interop\TheGameBakers.TGBTools.InputImage.Runtime.dll;$(BepInExPath)\interop\TheGameBakers.TGBTools.Common.Runtime.dll" Private="false" />
     <Reference Include="$(BepInExPath)\core\BepInEx*.dll;$(BepInExPath)\core\Il2CppInterop.Runtime.dll;$(BepInExPath)\interop\UnityEngine.CoreModule.dll;$(BepInExPath)\interop\UnityEngine.PhysicsModule.dll;$(BepInExPath)\interop\Unity.InputSystem.dll;$(BepInExPath)\interop\TheGameBakers.Cairn.Global.dll;$(BepInExPath)\interop\TheGameBakers.Cairn.Utilities.dll;$(BepInExPath)\interop\TheGameBakers.Cairn.Utilities.SingletonBase.dll;$(BepInExPath)\interop\Il2Cppmscorlib.dll" Private="false" />
   </ItemGroup>
 </Project>
