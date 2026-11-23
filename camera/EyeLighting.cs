@@ -32,6 +32,16 @@ internal static class EyeLighting
             harmony.UnpatchSelf();
             CameraPlugin.Logger.LogWarning($"Per-eye CAIRN lighting is unavailable on this build: {ex}");
         }
+        try
+        {
+            harmony.Patch(AccessTools.Method(typeof(MainDirectionalLightCommandBuffers),
+                    nameof(MainDirectionalLightCommandBuffers.BuildCommandBuffer_FarShadows)),
+                postfix: new HarmonyMethod(typeof(EyeLighting), nameof(CorrectFarShadowProjection)));
+        }
+        catch (Exception ex)
+        {
+            CameraPlugin.Logger.LogWarning($"Per-eye far-shadow projection is unavailable on this build: {ex}");
+        }
         var caves = new Harmony("community.cairnvr.camera.caves");
         try
         {
@@ -116,15 +126,25 @@ internal static class EyeLighting
     private static void CorrectCaveProjection(CaveVolumesManager __instance, Camera __0)
     {
         if (eyeCaves == null || !IsEye(__0)) return;
-        // The game's cave shader subtracts the projection-center offsets when
-        // reconstructing a depth sample. With Unity's negative view Z the
-        // inverse must add them. Correct that term in the shader's view basis.
-        var p = __0.projectionMatrix;
-        var toWorld = __0.cameraToWorldMatrix;
+        __instance.screenSpaceMaterial.SetMatrix(CaveVolumesManager.sid_InverseView, DepthSampleToWorld(__0));
+    }
+
+    private static void CorrectFarShadowProjection(MainDirectionalLightCommandBuffers __instance, Camera __0)
+    {
+        if (!IsEye(__0) || !__instance.shadowMapMaterial) return;
+        __instance.shadowMapMaterial.SetMatrix(__instance.sid_InverseView, DepthSampleToWorld(__0));
+    }
+
+    private static Matrix4x4 DepthSampleToWorld(Camera eye)
+    {
+        // Both CAIRN shaders subtract the optical-center offsets from screen XY.
+        // With negative view Z the inverse projection needs to add them instead.
+        var p = eye.projectionMatrix;
+        var toWorld = eye.cameraToWorldMatrix;
         var z = toWorld.GetColumn(2) - (2f * p.m02 / p.m00) * toWorld.GetColumn(0)
             - (2f * p.m12 / p.m11) * toWorld.GetColumn(1);
         toWorld.SetColumn(2, z);
-        __instance.screenSpaceMaterial.SetMatrix(CaveVolumesManager.sid_InverseView, toWorld);
+        return toWorld;
     }
 
     private static bool IsEye(Camera camera) =>
