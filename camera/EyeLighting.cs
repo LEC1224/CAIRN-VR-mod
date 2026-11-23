@@ -17,6 +17,7 @@ internal static class EyeLighting
 
     internal static void Install()
     {
+        EyeWallClipping.Install();
         var harmony = new Harmony("community.cairnvr.camera.lighting");
         void Prefix(Type type, string method, string prefix) =>
             harmony.Patch(AccessTools.Method(type, method),
@@ -71,7 +72,12 @@ internal static class EyeLighting
             if (caveHookInstalled) RenderWithCaveMask(eye, source);
             else eye.Render();
         }
-        finally { renderingEye = null; gameplayCamera = null; }
+        finally
+        {
+            renderingEye = null;
+            gameplayCamera = null;
+            EyeWallClipping.Restore();
+        }
     }
 
     private static void RenderWithCaveMask(Camera eye, Camera source)
@@ -147,7 +153,7 @@ internal static class EyeLighting
         return toWorld;
     }
 
-    private static bool IsEye(Camera camera) =>
+    internal static bool IsEye(Camera camera) =>
         renderingEye != null && camera != null && camera.Pointer == renderingEye.Pointer;
 
     private static bool ClassifyEye(Camera __0, ref MainCamera.RenderingCameraType __result)
