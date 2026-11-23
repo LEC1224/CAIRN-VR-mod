@@ -72,9 +72,8 @@ public sealed class ClimbingControls : MonoBehaviour
                 if (recenter == null && method != null) recenter = (Action)Delegate.CreateDelegate(typeof(Action), method);
                 recenter?.Invoke();
                 recenterStart = float.PositiveInfinity;
-            }
-            if (float.IsPositiveInfinity(recenterStart))
-            {
+                // Rebase the next hand sample after the camera recenters. A
+                // held selection grip must not keep suppressing the reach.
                 clutch = false;
                 gamepad.Apply(sample, null);
                 return;

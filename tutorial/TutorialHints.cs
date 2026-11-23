@@ -40,7 +40,7 @@ internal sealed class TutorialHints
                 && pawn.CurrentModule.Pointer == pawn.ReachingModule.Pointer;
             if (!reaching && ControllerModels.GazeAvailable)
                 Add(leftHanded ? "RightGrip" : "LeftGrip", "Look at a hand or foot\nSqueeze to select");
-            if (id == TutorialStringIdEnum.LimbMovementAndGrabHold && (reaching || !ControllerModels.GazeAvailable))
+            if (id == TutorialStringIdEnum.LimbMovementAndGrabHold)
             {
                 if (point) Add(grip, "Hold and point at a hold");
                 else if (move) Add(grip, "Hold and move to reach");
