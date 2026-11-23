@@ -1,10 +1,13 @@
 using System.Reflection;
+using System.Collections;
 using System.Runtime.InteropServices;
 using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
+using BepInEx.Unity.IL2CPP.Utils.Collections;
+using Il2CppInterop.Runtime.Attributes;
 using UnityEngine.InputSystem;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -94,7 +97,23 @@ public sealed class StereoView : MonoBehaviour
     private AudioListenerController listener;
     private int sceneHandle;
 
-    private void LateUpdate()
+    private void Start() => StartCoroutine(RenderAfterAnimation().WrapToIl2Cpp());
+
+    [HideFromIl2Cpp]
+    private IEnumerator RenderAfterAnimation()
+    {
+        var endOfFrame = new WaitForEndOfFrame();
+        while (true)
+        {
+            yield return endOfFrame;
+            RenderStereoFrame();
+        }
+    }
+
+    // CAIRN finalizes its climbing IK, hip corrections and skinned renderers
+    // after script LateUpdate. Sample the camera and render both eyes together
+    // once Unity has finished the same animated pose used by the desktop view.
+    private void RenderStereoFrame()
     {
         if (Application.isFocused && Keyboard.current?.f8Key.wasPressedThisFrame == true) Recenter();
         var pad = Gamepad.current;
