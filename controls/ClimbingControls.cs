@@ -388,7 +388,7 @@ public sealed class ClimbingControls : MonoBehaviour
         previousButtons = previousBumpers = consumedBumpers = previousHands = 0;
         recenterStart = -1;
         if (cue) cue!.SetActive(false);
-        gamepad.Clear();
+        gamepad.Neutralize();
     }
     public void OnDestroy()
     {

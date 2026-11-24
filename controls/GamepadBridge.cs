@@ -21,7 +21,7 @@ internal sealed class GamepadBridge
     bool loggedBridge;
     float physicalLastUsed = -100;
 
-    public unsafe void Apply(Sample sample, Vector2? motion)
+    public void Apply(Sample sample, Vector2? motion)
     {
         var settings = InputSystem.settings;
         if (settings.backgroundBehavior == InputSettings.BackgroundBehavior.ResetAndDisableAllDevices)
@@ -57,7 +57,7 @@ internal sealed class GamepadBridge
         if (motion.HasValue) state.leftStick = motion.Value;
         else if ((sample.Valid & 8) == 0 || physical != null || Time.unscaledTime - physicalLastUsed < .2f)
         {
-            Clear();
+            Neutralize();
             return;
         }
 
@@ -67,6 +67,18 @@ internal sealed class GamepadBridge
                 && state.leftTrigger < .01f && state.rightTrigger < .01f) return;
             output = CreateGamepad();
         }
+        Submit(state);
+    }
+
+    // Removing a device during a scene load pushes CAIRN into its disconnected
+    // gamepad context. Send all releases once and retain the device for recovery.
+    public void Neutralize()
+    {
+        if (output != null && submitted) Submit(default);
+    }
+
+    unsafe void Submit(GamepadState state)
+    {
         if (submitted && Same(state, previous)) return;
         // This non-generic event path also works when IL2CPP strips QueueStateEvent<GamepadState>.
         var buffer = StateEvent.From(output, out var eventPtr, Allocator.Temp);
@@ -125,16 +137,11 @@ internal sealed class GamepadBridge
         for (int i = 0; i < 14; i++) if (pad[(GamepadButton)i].isPressed) state.buttons |= 1u << i;
         return state;
     }
-    public void Clear()
+    public void Dispose()
     {
         if (output != null) InputSystem.RemoveDevice(output);
         output = null;
         submitted = false;
-    }
-
-    public void Dispose()
-    {
-        Clear();
         if (registeredLayout) InputSystem.RemoveLayout(LayoutName);
         registeredLayout = false;
         if (adjustedSettings && adjustedSettings.backgroundBehavior == InputSettings.BackgroundBehavior.ResetAndDisableNonBackgroundDevices)
