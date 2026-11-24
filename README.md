@@ -4,7 +4,7 @@ Play CAIRN in third person with a head-tracked stereoscopic view. Use CAIRN's or
 
 ## Playing on this PC
 
-In Steam, open **Library â†' CAIRN â†' Play**. Choose **Play normally** for the original game. For VR, connect your headset to SteamVR, check that SteamVR can see it, and choose **Play in VR**. For a Steam Frame streaming from a PC, use the CAIRN installation on the PC. SteamVR should be the PC's active OpenXR runtime.
+In Steam, open **Library â†’ CAIRN â†’ Play**. Choose **Play normally** for the original game. For VR, connect your headset to SteamVR, check that SteamVR can see it, and choose **Play in VR**. For a Steam Frame streaming from a PC, use the CAIRN installation on the PC. SteamVR should be the PC's active OpenXR runtime.
 
 The Windows chooser appears on the PC desktop. With SteamVR already running, Steam may show a **VR Theater Screen** notice first. Select **OK** to continue to the chooser. If you launch from inside the headset, open SteamVR's desktop view to reach the chooser, then return to the game. SteamVR can pause the view and controller input while the Frame is in standby.
 
@@ -31,7 +31,7 @@ The camera can steady the viewpoint through falls and fade when the headset woul
 
 ## Reinstalling on Windows
 
-The chooser is already configured on the development PC. Build `dist/CairnVR.zip` from source using the instructions below, then extract it beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties â†' General â†' Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
+The chooser is already configured on the development PC. Build `dist/CairnVR.zip` from source using the instructions below, then extract it beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties â†’ General â†’ Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
 
 ```text
 "C:\Program Files (x86)\Steam\steamapps\common\Cairn\CairnVRLauncher.exe" %command%
@@ -62,6 +62,8 @@ An RTX 3080 test ran for 12 minutes in the climbing gym with the desktop at 2560
 The UI and lighting update was tested in the installed game using simulated head and controller poses. The menu stayed within one pixel of its position in each eye during rotation and leaning. During a 20Â° turn, the bright summit and foreground rock highlight followed the scenery. Controller silhouettes matched the projection of Valve's model to within one pixel in the tested poses. Tests using isolated tutorial records exercised the default X prompt, a remap to Y, and gaze and manual limb hints without advancing a player save.
 
 In VR, the upper weather clouds use the distance from the viewer to the cloud to determine their opacity. Cave shading uses a separate mask for each eye. To check these effects, the installed game rendered the same frozen weather through head turns and tilts. The tests also tracked the sun and its halo under a clear sky and placed a temporary cave volume over a test surface.
+
+In the installed climbing gym, simulated Frame controllers selected all four limbs with their matching bumpers, moved each limb only from its own side, and placed it using the matching grip. A hip trigger and side grip produced the left- and right-hand chalk animations and each consumed one charge. Shaking either controller entered the game's stamina recovery. Hip gestures did not fire while walking. The virtual gamepad stayed connected through a simulated loss of tracking input.
 
 During PC streaming, the player confirmed that the mountain and CAIRNâ€™s main menu were visible inside the Steam Frame. Gaze selection and controller-guided limb placement during a climb, comfort during play and standalone performance still need playtesting.
 

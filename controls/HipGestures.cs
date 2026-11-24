@@ -44,7 +44,8 @@ internal sealed class HipGestures
             shake |= recovering;
         }
         if (chalkSide >= 0) Chalk(pawn, chalkSide == 1);
-        else if (shake && pawn.CanTriggerRest()) pawn.RestoreTriggered();
+        else if (shake && pawn.CanTriggerRest() && !pawn.PawnControllerSwitcher.goToRappelRequest)
+            pawn.TransitionToModule(pawn.RestModule, true);
         return reserved;
     }
 
