@@ -143,7 +143,7 @@ public static class ControllerModels
                 if (hand != null && hand.Tracked && hand.Root) hand.Draw(depthPass: false);
             foreach (var hand in hands)
                 if (hand != null && hand.Tracked && hand.Root)
-                    icons.Draw(hand.Anchors);
+                    icons.Draw(hand.Root.localToWorldMatrix, hand.IconSurfaces);
             AfterControllersRendered?.Invoke(eye);
         }
         finally { collecting = false; }
@@ -197,6 +197,7 @@ public static class ControllerModels
         const float DpadArm = .008f;
         internal readonly Transform Root;
         internal readonly Dictionary<string, Transform> Anchors = new();
+        internal readonly Dictionary<string, Matrix4x4> IconSurfaces;
         internal readonly bool Frame;
         internal bool Tracked;
         readonly List<(Mesh mesh, Matrix4x4 local, Material mat)> parts = new();
@@ -226,6 +227,7 @@ public static class ControllerModels
                 ControlsPlugin.Logger.LogInfo($"Loaded the Steam Frame {(right ? "right" : "left")} controller and its button anchors.");
             }
             else BuildFallback();
+            IconSurfaces = ControllerIcons.Layout(Anchors);
         }
 
         void AlignFacePad()

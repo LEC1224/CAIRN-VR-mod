@@ -11,6 +11,8 @@ namespace CairnVR.Controls;
 internal sealed class ControllerIcons
 {
     const float HoverHeight = .010f;
+    const float ItemSize = .0135f, DiscSize = .014f, LetterSize = .019f;
+    const float PadGap = .006f;
     // Paint for the physical caps, sampled from CAIRN's light gamepad prompts.
     // The floating letters themselves come from the game's input image manager.
     static readonly (string control, string part, string path, Color32 paint)[] faceButtons =
@@ -107,20 +109,52 @@ internal sealed class ControllerIcons
         }
     }
 
-    internal void Draw(Dictionary<string, Transform> anchors)
+    internal static Dictionary<string, Matrix4x4> Layout(Dictionary<string, Transform> anchors)
+    {
+        var surfaces = new Dictionary<string, Matrix4x4>(anchors.Count);
+        foreach (var (name, anchor) in anchors)
+            surfaces[name] = Matrix4x4.TRS(anchor.localPosition, anchor.localRotation, Vector3.one);
+
+        SpreadPad(new[] { "Up", "Right", "Down", "Left" }, DiscSize);
+        SpreadPad(Array.ConvertAll(faceButtons, button => button.control), LetterSize);
+        return surfaces;
+
+        // Expand about the physical pad center in its own plane. Include every
+        // button on this hand so hiding or rebinding an item cannot move its neighbors.
+        void SpreadPad(string[] names, float diameter)
+        {
+            var buttons = Array.FindAll(names, anchors.ContainsKey);
+            if (buttons.Length < 2) return;
+            var fromPad = anchors[buttons[0]].localRotation;
+            var toPad = Quaternion.Inverse(fromPad);
+            var points = Array.ConvertAll(buttons, name => (Vector2)(toPad * anchors[name].localPosition));
+            var center = Vector2.zero;
+            float closest = float.PositiveInfinity;
+            for (int i = 0; i < points.Length; i++)
+            {
+                center += points[i];
+                for (int j = 0; j < i; j++) closest = Mathf.Min(closest, Vector2.Distance(points[i], points[j]));
+            }
+            if (closest < .0001f || closest >= diameter + PadGap) return;
+            center /= points.Length;
+            float expansion = (diameter + PadGap) / closest - 1f;
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                var offset = fromPad * (Vector3)((points[i] - center) * expansion);
+                surfaces[buttons[i]] = Matrix4x4.Translate(offset) * surfaces[buttons[i]];
+            }
+        }
+    }
+
+    internal void Draw(Matrix4x4 handToWorld, Dictionary<string, Matrix4x4> surfaces)
     {
         foreach (var entry in visible)
         {
-            if (!anchors.TryGetValue(entry.Key, out var anchor)) continue;
-            var surface = anchor.localToWorldMatrix;
+            if (!surfaces.TryGetValue(entry.Key, out var local)) continue;
+            var surface = handToWorld * local;
             var (glyph, drawBacking) = entry.Value;
-            if (drawBacking)
-            {
-                // Adjacent arms are 11.3 mm apart on the D-pad.
-                backing.Draw(surface, HoverHeight - .0003f, .0108f);
-                glyph.Draw(surface, HoverHeight, .0095f);
-            }
-            else glyph.Draw(surface, HoverHeight, .014f);
+            if (drawBacking) backing.Draw(surface, HoverHeight - .0003f, DiscSize);
+            glyph.Draw(surface, HoverHeight, drawBacking ? ItemSize : LetterSize);
         }
     }
 
