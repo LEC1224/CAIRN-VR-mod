@@ -15,6 +15,7 @@ public sealed class ClimbingControls : MonoBehaviour
     Transform origin;
     Material ink;
     readonly LimbGazeHint gazeHint = new();
+    readonly HipGestures hips = new();
     readonly IdleLift[] lifts = { new(), new() };
     IntPtr motionLimb;
     bool hadSample, faulted;
@@ -116,8 +117,9 @@ public sealed class ClimbingControls : MonoBehaviour
         Vector2? motion = null;
         if (climbing)
         {
+            var atHip = hips.Update(pawn, ref sample);
             UpdateGaze(pawn, sample, bumperDown);
-            motion = UpdateReach(pawn, sample, gripDown);
+            motion = UpdateReach(pawn, sample, gripDown, atHip);
         }
         // Keep a consumed press private until release, even if the gaze moves away.
         sample.Buttons &= ~consumedBumpers;
@@ -151,7 +153,7 @@ public sealed class ClimbingControls : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    Vector2? UpdateReach(ClimbingV2PawnController pawn, Sample sample, uint gripDown)
+    Vector2? UpdateReach(ClimbingV2PawnController pawn, Sample sample, uint gripDown, uint atHip)
     {
         var module = pawn.CurrentModule;
         var reaching = pawn.ReachingModule;
@@ -159,9 +161,10 @@ public sealed class ClimbingControls : MonoBehaviour
         if (module != null && module.Pointer == pawn.IdleModule?.Pointer && useMotion)
         {
             motionLimb = IntPtr.Zero;
-            // A deliberate lift starts a same-side reach.
-            bool left = Lifted(sample, false);
-            bool right = Lifted(sample, true);
+            // A deliberate lift starts a same-side reach. Neither lowering a hand
+            // to chalk nor returning it from the hip should take a limb off the wall.
+            bool left = Lifted(sample, false, atHip);
+            bool right = Lifted(sample, true, atHip);
             if (left != right && !pawn.FullManualSelectionMode && pawn.CanStartReaching() && pawn.CanSelectLimb())
             {
                 var hand = right ? pawn.rightHand : pawn.leftHand;
@@ -181,7 +184,7 @@ public sealed class ClimbingControls : MonoBehaviour
         }
         bool ownerRight = active.IsRight;
         uint owner = ownerRight ? 2u : 1u;
-        if (!sample.TryGrip(ownerRight, out var grip))
+        if ((atHip & owner) != 0 || !sample.TryGrip(ownerRight, out var grip))
         {
             motionLimb = IntPtr.Zero;
             return null;
@@ -223,10 +226,10 @@ public sealed class ClimbingControls : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    bool Lifted(Sample sample, bool right)
+    bool Lifted(Sample sample, bool right, uint atHip)
     {
         int index = right ? 1 : 0;
-        if (!sample.TryGrip(right, out var grip))
+        if ((atHip & (1u << index)) != 0 || !sample.TryGrip(right, out var grip))
         {
             lifts[index].Reset();
             return false;
@@ -283,6 +286,7 @@ public sealed class ClimbingControls : MonoBehaviour
         climbingPawn = motionLimb = IntPtr.Zero;
         lifts[0].Reset();
         lifts[1].Reset();
+        hips.Reset();
         gazeHint.Clear();
     }
 

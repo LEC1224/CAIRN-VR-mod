@@ -4,7 +4,7 @@ Play CAIRN in third person with a head-tracked stereoscopic view. Use CAIRN's or
 
 ## Playing on this PC
 
-In Steam, open **Library â†’ CAIRN â†’ Play**. Choose **Play normally** for the original game. For VR, connect your headset to SteamVR, check that SteamVR can see it, and choose **Play in VR**. For a Steam Frame streaming from a PC, use the CAIRN installation on the PC. SteamVR should be the PC's active OpenXR runtime.
+In Steam, open **Library â†' CAIRN â†' Play**. Choose **Play normally** for the original game. For VR, connect your headset to SteamVR, check that SteamVR can see it, and choose **Play in VR**. For a Steam Frame streaming from a PC, use the CAIRN installation on the PC. SteamVR should be the PC's active OpenXR runtime.
 
 The Windows chooser appears on the PC desktop. With SteamVR already running, Steam may show a **VR Theater Screen** notice first. Select **OK** to continue to the chooser. If you launch from inside the headset, open SteamVR's desktop view to reach the chooser, then return to the game. SteamVR can pause the view and controller input while the Frame is in standby.
 
@@ -22,6 +22,8 @@ In the tutorial, look at your controllers for the current lesson's button labels
 | Eye selection | Enable **Select limbs with eye tracking**. Look at a visible hand or foot and press the bumper on that side (LB for left, RB for right). After a brief dwell, a bumper icon and **Move arm** or **Move leg** appear next to the target. If limbs overlap, change your viewing angle. This requires eye tracking and controllers with bumpers, such as Steam Frame. |
 | Controller movement | Choose **Move the matching controller**. Steady one controller briefly, then lift it about 5 cm to start a reach with the free or less-loaded limb on that side, or select a specific limb first. Move the matching controller to guide the reach and squeeze its side grip to place the hand or foot. |
 | Pointed reach | Choose **Point with the matching controller**. During a reach, point the controller on the limb's side at a hold and squeeze its side grip to place the limb. CAIRN determines whether the hold works. |
+| Shake out | During a climb, lower either controller beside your hip and shake it back and forth with the buttons released. This triggers CAIRN's recover-stamina action when available (normally Y on a gamepad or Q on a keyboard). CAIRN chooses which hand rests. |
+| Chalk | During a climb, lower the controller beside your hip, then press its index trigger or side grip to use chalk on that hand. The usual chalk supply and availability rules apply. |
 | Route markers | Enable **Place route markers while scouting**. In Eagle Eye, point at the rock with the right controller and squeeze its grip to add or remove a marker. Select **Mark routes with the left controller** to switch hands. Up to eight markers last for the current scene. |
 | Recenter | Face forward and hold both grips for about one second outside a climb, or press **F8** on the PC. |
 
@@ -29,7 +31,7 @@ The camera can steady the viewpoint through falls and fade when the headset woul
 
 ## Reinstalling on Windows
 
-The chooser is already configured on the development PC. Build `dist/CairnVR.zip` from source using the instructions below, then extract it beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties â†’ General â†’ Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
+The chooser is already configured on the development PC. Build `dist/CairnVR.zip` from source using the instructions below, then extract it beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties â†' General â†' Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
 
 ```text
 "C:\Program Files (x86)\Steam\steamapps\common\Cairn\CairnVRLauncher.exe" %command%
