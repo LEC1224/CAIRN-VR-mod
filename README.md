@@ -1,6 +1,6 @@
 # CAIRN VR
 
-Play CAIRN in third person with a head-tracked stereoscopic view. Aava uses the game's original climbing controls. You can also pick a limb with your eyes and guide its reach with one controller.
+Play CAIRN in third person with a head-tracked stereoscopic view. Use CAIRN's original controls or move Aava's left limbs with your left controller and her right limbs with your right controller.
 
 ## Playing on this PC
 
@@ -14,23 +14,22 @@ Both tracked controllers are visible during ordinary play. The mod reads the Ste
 
 CAIRN's quick-inventory icons and colored A, B, X and Y letters float 1 cm above the pads and tilt with them. Each group follows the physical button layout with extra space between icons. With the game's default bindings, D-pad up is the piton, right is chalk, down is the backpack and left is the flask. The icons follow the current quick-inventory layer and your gamepad bindings.
 
-In the tutorial, look at your controllers for the current lesson's button labels. A ring marks the button and a line connects it to the instruction. The default **Start climbing** prompt points to **X** on the right Frame controller and follows the game's binding if you remap it. With eye selection enabled and gaze tracking active, the limb-selection lesson points to the non-reaching hand's grip. Controller movement, pointed reach and route-marking instructions depend on the options selected in the launcher. The labels reuse CAIRN's lettering and short localized instructions where available. The added VR gesture instructions are in English.
+In the tutorial, look at your controllers for the current lesson's button labels. A ring marks the button and a line connects it to the instruction. The default **Start climbing** prompt points to **X** on the right Frame controller and follows the game's binding if you remap it. With eye selection enabled, the limb-selection lesson labels the left and right bumpers. Controller movement, pointed reach and route-marking instructions depend on the options selected in the launcher. The labels reuse CAIRN's lettering and short localized instructions where available. The added VR gesture instructions are in English.
 
 | Control | How to use it |
 | --- | --- |
 | Standard climbing | Use CAIRN's usual sticks, buttons and grab control. You can use the Frame controllers or a separate gamepad. |
-| Eye selection | Enable **Select limbs with eye tracking**. Look at one visible hand or foot. When the target indicator appears, squeeze the non-reaching hand's grip to start reaching with that limb. If two endpoints overlap, change your viewing angle. The runtime must supply eye gaze. Manual limb selection is always available. |
-| Controller movement | At the wall, hold the reaching hand's grip and move that controller up, down or sideways. CAIRN can choose the limb from your first movement, or you can select one yourself. Release the grip to reposition your hand. Use CAIRN's usual grab control to place the limb. |
-| Pointed reach | Choose **Point at the rock while gripping**. With a limb selected, hold the reaching hand's grip and point at the intended spot. Release the grip to fine-tune with the stick, then use the usual grab control. CAIRN determines reach and whether the hold works. |
-| Route markers | Enable **Place route markers while scouting**. In Eagle Eye, aim at the rock and squeeze the reaching hand's grip to place a mark. Point at the same mark and squeeze again to remove it. Up to eight markers last for the current scene. |
-| Handedness | The right hand reaches by default. **Use left hand to reach and mark routes** swaps the two gesture roles. |
-| Recenter | Sit or stand as you intend to play, face forward and hold both grips for about one second, or press **F8** on the PC. |
+| Eye selection | Enable **Select limbs with eye tracking**. Look at a visible hand or foot and press the bumper on that side (LB for left, RB for right). After a brief dwell, a bumper icon and **Move arm** or **Move leg** appear next to the target. If limbs overlap, change your viewing angle. This requires eye tracking and controllers with bumpers, such as Steam Frame. |
+| Controller movement | Choose **Move the matching controller**. Steady one controller briefly, then lift it about 5 cm to start a reach with the free or less-loaded limb on that side, or select a specific limb first. Move the matching controller to guide the reach and squeeze its side grip to place the hand or foot. |
+| Pointed reach | Choose **Point with the matching controller**. During a reach, point the controller on the limb's side at a hold and squeeze its side grip to place the limb. CAIRN determines whether the hold works. |
+| Route markers | Enable **Place route markers while scouting**. In Eagle Eye, point at the rock with the right controller and squeeze its grip to add or remove a marker. Select **Mark routes with the left controller** to switch hands. Up to eight markers last for the current scene. |
+| Recenter | Face forward and hold both grips for about one second outside a climb, or press **F8** on the PC. |
 
 The camera can steady the viewpoint through falls and fade when the headset would enter rock. Settings for these behaviors, eye resolution and head-oriented audio are in `BepInEx/config/community.cairnvr.camera.cfg` after the first VR launch. `MaxEyeDimension` defaults to 1600 pixels on the longest edge. Both eyes keep their optical proportions. Lower this value and relaunch if frame pacing is uneven. Raise it for more detail, or set it to 0 to use SteamVR’s recommended dimensions multiplied by `RenderScale`. The plugin log records the requested and actual eye sizes. Gesture sensitivity and the recenter chord are in `BepInEx/config/cairn.vr.controls.cfg`. If the headset stays in SteamVR Home, check the status on the game's desktop window and the plugin messages in `BepInEx/LogOutput.log`.
 
 ## Reinstalling on Windows
 
-The chooser is already configured on the development PC. For a clean install elsewhere, extract `CairnVR.zip` beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties → General → Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
+The chooser is already configured on the development PC. Build `dist/CairnVR.zip` from source using the instructions below, then extract it beside `Cairn.exe`. If that installation already uses BepInEx or Doorstop, keep a copy of its loader configuration and merge the plugin folders. In CAIRN's **Properties → General → Launch Options**, enter the quoted full path to the launcher followed by `%command%`. For the default Steam library, the value is
 
 ```text
 "C:\Program Files (x86)\Steam\steamapps\common\Cairn\CairnVRLauncher.exe" %command%

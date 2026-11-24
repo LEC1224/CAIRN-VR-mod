@@ -33,7 +33,7 @@ if [[ $mode == ask ]]; then
                 --column="Use" --column="ID" --column="Control" --hide-column=2 --print-column=2 \
                 "${defaults[0]}" gaze "Select limbs with eye tracking" \
                 "${defaults[1]}" markers "Place route markers while scouting" \
-                "${defaults[2]}" lefthanded "Use left hand to reach and mark routes") || exit 0
+                "${defaults[2]}" lefthanded "Mark routes with the left controller") || exit 0
             saved="$choice${saved:+|$saved}"
             mkdir -p -- "$config_dir"
             temporary=$(mktemp "$config_dir/.frame-controls.XXXXXX")

@@ -18,11 +18,12 @@ bool gazeEnabled{}, frameProfile{}, attached{}, wanted{};
 enum Action
 {
     Gaze,
-    GripPose,
-    AimPose,
-    OtherGripPose,
-    Select,
-    Reach,
+    RightGripPose,
+    RightAimPose,
+    LeftGripPose,
+    LeftAimPose,
+    LeftSqueeze,
+    RightSqueeze,
     LStick,
     RStick,
     LT,
@@ -44,7 +45,7 @@ enum Action
     Count
 };
 XrAction actions[Count]{};
-XrSpace spaces[4]{};
+XrSpace spaces[LeftAimPose + 1]{};
 XrPath handPaths[2]{}, framePath{};
 unsigned frameHands{};
 ULONGLONG nextProfileCheck{};
@@ -56,13 +57,14 @@ struct Sample
 {
     unsigned long long sequence;
     unsigned valid, pressed;
-    Pose gaze, grip, aim;
+    Pose gaze, rightGrip, rightAim;
     float lx, ly, rx, ry, lt, rt;
     unsigned buttons;
-    Pose otherGrip;
+    Pose leftGrip;
     unsigned frameHands;
+    Pose leftAim;
 };
-static_assert(sizeof(Sample) == 160, "Managed sample ABI mismatch");
+static_assert(sizeof(Sample) == 192, "Managed sample ABI mismatch");
 Sample latest{};
 std::mutex guard;
 ULONGLONG sampledAt{};
@@ -139,9 +141,10 @@ XrPath path(const std::string &name)
 const char *names[Count] = {"gaze",
                             "right_grip_pose",
                             "right_aim",
-                            "other_grip_pose",
-                            "select_limb",
-                            "reach_or_mark",
+                            "left_grip_pose",
+                            "left_aim",
+                            "left_squeeze",
+                            "right_squeeze",
                             "left_stick",
                             "right_stick",
                             "left_trigger",
@@ -166,6 +169,7 @@ void bindProfile(const char *profile, bool frame, bool shoulder)
                                      "right/input/grip/pose",
                                      "right/input/aim/pose",
                                      "left/input/grip/pose",
+                                     "left/input/aim/pose",
                                      "left/input/squeeze/value",
                                      "right/input/squeeze/value",
                                      "left/input/thumbstick",
@@ -188,8 +192,8 @@ void bindProfile(const char *profile, bool frame, bool shoulder)
                                      nullptr};
     if (frame)
     {
-        components[Select] = "left/input/squeeze/click";
-        components[Reach] = "right/input/squeeze/click";
+        components[LeftSqueeze] = "left/input/squeeze/click";
+        components[RightSqueeze] = "right/input/squeeze/click";
         components[Up] = "left/input/dpad_up/click";
         components[Down] = "left/input/dpad_down/click";
         components[Left] = "left/input/dpad_left/click";
@@ -200,14 +204,6 @@ void bindProfile(const char *profile, bool frame, bool shoulder)
         components[RB] = shoulder ? "right/input/shoulder/click" : "right/input/bumper/click";
         components[Menu] = "right/input/menu/click";
         components[View] = "left/input/view/click";
-    }
-    if (option("CAIRNVR_LEFTHANDED"))
-    {
-        components[GripPose] = "left/input/grip/pose";
-        components[AimPose] = "left/input/aim/pose";
-        components[OtherGripPose] = "right/input/grip/pose";
-        components[Select] = frame ? "right/input/squeeze/click" : "right/input/squeeze/value";
-        components[Reach] = frame ? "left/input/squeeze/click" : "left/input/squeeze/value";
     }
     std::vector<XrActionSuggestedBinding> b;
     for (int i = 0; i < Count; i++)
@@ -235,7 +231,7 @@ void createActions()
         XrActionCreateInfo ai{XR_TYPE_ACTION_CREATE_INFO};
         strcpy_s(ai.actionName, names[i]);
         strcpy_s(ai.localizedActionName, names[i]);
-        ai.actionType = i <= OtherGripPose             ? XR_ACTION_TYPE_POSE_INPUT
+        ai.actionType = i <= LeftAimPose             ? XR_ACTION_TYPE_POSE_INPUT
                         : (i == LStick || i == RStick) ? XR_ACTION_TYPE_VECTOR2F_INPUT
                         : (i == LT || i == RT)         ? XR_ACTION_TYPE_FLOAT_INPUT
                                                        : XR_ACTION_TYPE_BOOLEAN_INPUT;
@@ -275,7 +271,7 @@ XrResult XRAPI_CALL begin(XrSession s, const XrSessionBeginInfo *info)
         if (set && XR_SUCCEEDED(api.xrAttachSessionActionSets(s, &attach)))
         {
             attached = true;
-            for (int i = 0; i <= OtherGripPose; i++)
+            for (int i = 0; i <= LeftAimPose; i++)
                 if (actions[i])
                 {
                     XrActionSpaceCreateInfo si{XR_TYPE_ACTION_SPACE_CREATE_INFO};
@@ -325,7 +321,7 @@ XrResult XRAPI_CALL locate(XrSession s, const XrViewLocateInfo *info, XrViewStat
             continue;
         XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
         gi.action = actions[i];
-        if (i <= OtherGripPose && spaces[i])
+        if (i <= LeftAimPose && spaces[i])
         {
             XrActionStatePose ps{XR_TYPE_ACTION_STATE_POSE};
             XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
@@ -341,13 +337,16 @@ XrResult XRAPI_CALL locate(XrSession s, const XrViewLocateInfo *info, XrViewStat
                    -p.orientation.y, p.orientation.z, p.orientation.w};
             if (i == Gaze)
                 out.gaze = v;
-            else if (i == GripPose)
-                out.grip = v;
-            else if (i == AimPose)
-                out.aim = v;
+            else if (i == RightGripPose)
+                out.rightGrip = v;
+            else if (i == RightAimPose)
+                out.rightAim = v;
+            else if (i == LeftGripPose)
+                out.leftGrip = v;
             else
-                out.otherGrip = v;
-            out.valid |= i == OtherGripPose ? 16u : 1u << i;
+                out.leftAim = v;
+            // Bit 3 is reserved for the gamepad axes.
+            out.valid |= i >= LeftGripPose ? 1u << (i + 1) : 1u << i;
         }
         else if (i == LStick || i == RStick)
         {
@@ -378,13 +377,13 @@ XrResult XRAPI_CALL locate(XrSession s, const XrViewLocateInfo *info, XrViewStat
                     out.rt = fs.currentState;
             }
         }
-        else if (i >= Select && i != LStick && i != RStick)
+        else if (i >= LeftSqueeze)
         {
             XrActionStateBoolean bs{XR_TYPE_ACTION_STATE_BOOLEAN};
             if (XR_SUCCEEDED(api.xrGetActionStateBoolean(s, &gi, &bs)) && bs.isActive && bs.currentState)
             {
-                if (i == Select || i == Reach)
-                    out.pressed |= 1u << (i - Select);
+                if (i == LeftSqueeze || i == RightSqueeze)
+                    out.pressed |= 1u << (i - LeftSqueeze);
                 else if (i >= Up)
                     out.buttons |= 1u << (i - Up); // GamepadButton indices 0..13
             }

@@ -39,11 +39,18 @@ internal sealed class TutorialHints
             bool reaching = pawn != null && pawn.CurrentModule != null && pawn.ReachingModule != null
                 && pawn.CurrentModule.Pointer == pawn.ReachingModule.Pointer;
             if (!reaching && ControllerModels.GazeAvailable)
-                Add(leftHanded ? "RightGrip" : "LeftGrip", "Look at a hand or foot\nSqueeze to select");
-            if (id == TutorialStringIdEnum.LimbMovementAndGrabHold)
             {
-                if (point) Add(grip, "Hold and point at a hold");
-                else if (move) Add(grip, "Hold and move to reach");
+                Add("LB", "Look at a left limb\nPress LB to move it");
+                Add("RB", "Look at a right limb\nPress RB to move it");
+            }
+            if (reaching && (move || point) && id == TutorialStringIdEnum.LimbMovementAndGrabHold)
+            {
+                var limb = pawn.ReachingModule.ReachingLimb;
+                if (limb != null)
+                {
+                    bool right = limb.Pointer == pawn.rightHand?.Pointer || limb.Pointer == pawn.rightFoot?.Pointer;
+                    Add(right ? "RightGrip" : "LeftGrip", point ? "Point at a hold\nSqueeze to place" : "Move to the hold\nSqueeze to place");
+                }
             }
         }
         if (markers && id is TutorialStringIdEnum.RoutePlanningTip or TutorialStringIdEnum.RoutePlanningSlidePanel or TutorialStringIdEnum.RoutePlanningReminderTip)

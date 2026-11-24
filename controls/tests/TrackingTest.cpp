@@ -16,15 +16,17 @@ struct Sample
 {
     uint64_t seq;
     uint32_t valid, pressed;
-    Pose gaze, grip, aim;
+    Pose gaze, rightGrip, rightAim;
     float lx, ly, rx, ry, lt, rt;
     uint32_t buttons;
-    Pose otherGrip;
+    Pose leftGrip;
     uint32_t frameHands;
+    Pose leftAim;
 };
+static_assert(sizeof(Sample) == 192);
 int actionId = 0, attempts = 0;
 bool focus = true;
-bool supportsFrame = false, otherHandTracked = true;
+bool supportsFrame = false, leftHandTracked = true;
 std::vector<std::string> paths;
 std::map<XrAction, std::string> actionNames;
 std::map<std::string, std::string> frameBindings;
@@ -103,7 +105,8 @@ XrResult XRAPI_CALL xrGetActionStatePose(XrSession, const XrActionStateGetInfo *
 XrResult XRAPI_CALL xrLocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpaceLocation *p)
 {
     assert((uint64_t)base == 42 && time == 128);
-    p->locationFlags = (!otherHandTracked && actionNames.at((XrAction)space) == "other_grip_pose") ? 0u : 3u;
+    const auto &name = actionNames.at((XrAction)space);
+    p->locationFlags = (!leftHandTracked && (name == "left_grip_pose" || name == "left_aim")) ? 0u : 3u;
     p->pose.orientation = {0, 0, 0, 1};
     p->pose.position = {float(reinterpret_cast<uintptr_t>(space)), 2, 3};
     return XR_SUCCESS;
@@ -126,10 +129,11 @@ XrResult XRAPI_CALL xrGetActionStateFloat(XrSession, const XrActionStateGetInfo 
     p->currentState = .75f;
     return XR_SUCCESS;
 }
-XrResult XRAPI_CALL xrGetActionStateBoolean(XrSession, const XrActionStateGetInfo *, XrActionStateBoolean *p)
+XrResult XRAPI_CALL xrGetActionStateBoolean(XrSession, const XrActionStateGetInfo *input, XrActionStateBoolean *p)
 {
     p->isActive = 1;
-    p->currentState = 1;
+    const auto &name = actionNames.at(input->action);
+    p->currentState = !supportsFrame || name == "left_squeeze" || name == "right_shoulder";
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL xrDestroySpace(XrSpace)
@@ -201,8 +205,9 @@ int wmain(int argc, wchar_t **argv)
     info.displayTime = 128;
     assert(xrLocateViews(s, &info, nullptr, 2, nullptr, nullptr) == XR_SUCCESS);
     Sample sample{};
-    assert(rd(&sample, sizeof(sample)) && sample.seq && sample.pressed == 3 && sample.valid == 31 &&
-           sample.grip.x != sample.otherGrip.x && sample.otherGrip.z == -3 && sample.frameHands == 0 &&
+    assert(rd(&sample, sizeof(sample)) && sample.seq && sample.pressed == 3 && sample.valid == 63 &&
+           sample.rightGrip.x != sample.leftGrip.x && sample.leftGrip.z == -3 &&
+           sample.rightAim.x != sample.leftAim.x && sample.leftAim.z == -3 && sample.frameHands == 0 &&
            sample.gaze.z == -3 && sample.lx == .5f && sample.lt == .75f && sample.buttons == 0x3fff);
     assert(!rd(&sample, 12));
     focus = false;
@@ -213,16 +218,23 @@ int wmain(int argc, wchar_t **argv)
     assert(!rd(&sample, sizeof(sample)));
     supportsFrame = true;
     focus = true;
-    otherHandTracked = false;
+    leftHandTracked = false;
     SetEnvironmentVariableA("CAIRNVR_LEFTHANDED", "1");
     assert(layer.createApiLayerInstance(&ii, &ci, &instance) == XR_SUCCESS);
     assert(xrBeginSession(s, nullptr) == XR_SUCCESS);
-    assert(frameBindings["right_grip_pose"] == "/user/hand/left/input/grip/pose");
-    assert(frameBindings["other_grip_pose"] == "/user/hand/right/input/grip/pose");
-    assert(frameBindings["select_limb"] == "/user/hand/right/input/squeeze/click");
+    // A left-handed route marker preference must never swap physical climbing controls.
+    assert(frameBindings["right_grip_pose"] == "/user/hand/right/input/grip/pose");
+    assert(frameBindings["left_grip_pose"] == "/user/hand/left/input/grip/pose");
+    assert(frameBindings["right_aim"] == "/user/hand/right/input/aim/pose");
+    assert(frameBindings["left_aim"] == "/user/hand/left/input/aim/pose");
+    assert(frameBindings["left_squeeze"] == "/user/hand/left/input/squeeze/click");
+    assert(frameBindings["right_squeeze"] == "/user/hand/right/input/squeeze/click");
+    assert(frameBindings["left_shoulder"] == "/user/hand/left/input/shoulder/click");
+    assert(frameBindings["right_shoulder"] == "/user/hand/right/input/shoulder/click");
     assert(frameBindings["x"] == "/user/hand/right/input/x/click");
     xrLocateViews(s, &info, nullptr, 2, nullptr, nullptr);
     assert(rd(&sample, sizeof(sample)) && sample.frameHands == 1 && sample.valid == 15);
+    assert(sample.pressed == 1u && sample.buttons == (1u << 11));
     xrDestroySession(s);
     xrDestroyInstance(instance);
     puts("Passed input negotiation, physical hand profiles, handedness, independent pose validity, buttons, focus loss and teardown.");

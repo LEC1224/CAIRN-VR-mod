@@ -14,6 +14,7 @@ public sealed class ControlsPlugin : BasePlugin
     internal enum RecenterControl { BothGrips, BothStickClicks, Off }
     internal static RecenterControl Recenter;
     internal static bool Gaze, Reach, Markers, Point;
+    internal static bool MarkerRight;
     internal static float MotionRange;
     internal static bool PreviouslyRanInBackground;
     internal static BepInEx.Logging.ManualLogSource Logger = null!;
@@ -24,6 +25,7 @@ public sealed class ControlsPlugin : BasePlugin
         Gaze = Enabled("GAZE");
         Reach = Enabled("REACH");
         Markers = Enabled("MARKERS");
+        MarkerRight = !Enabled("LEFTHANDED");
         Point = Enabled("POINT");
         Recenter = Config.Bind("Comfort", "RecenterControl", RecenterControl.BothGrips,
             "Hold the selected controller chord for 0.8 seconds to recenter. F8 remains available.").Value;
@@ -51,11 +53,29 @@ internal struct Sample
 {
     public ulong Sequence;
     public uint Valid, Pressed;
-    public TrackedPose Gaze, Grip, Aim;
+    public TrackedPose Gaze;
+    TrackedPose rightGrip, rightAim;
     public float LX, LY, RX, RY, LT, RT;
     public uint Buttons;
-    public TrackedPose OtherGrip;
+    TrackedPose leftGrip;
     public uint FrameHands;
+    TrackedPose leftAim;
+
+    // All hand-specific inputs refer to the physical controller.
+    public bool TryGrip(bool right, out TrackedPose pose)
+    {
+        pose = right ? rightGrip : leftGrip;
+        return (Valid & (right ? 2u : 16u)) != 0;
+    }
+    public bool TryAim(bool right, out TrackedPose pose)
+    {
+        pose = right ? rightAim : leftAim;
+        return (Valid & (right ? 4u : 32u)) != 0;
+    }
+    public bool GripDown(bool right) => (Pressed & (right ? 2u : 1u)) != 0;
+    public float TriggerValue(bool right) => right ? RT : LT;
+    public static uint BumperMask(bool right) => 1u << (right ? 11 : 10);
+    public bool BumperDown(bool right) => (Buttons & BumperMask(right)) != 0;
 }
 internal static class Tracking
 {

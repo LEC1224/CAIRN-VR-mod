@@ -14,7 +14,12 @@ public sealed class ClimbingControls : MonoBehaviour
     GameObject cue;
     Transform origin;
     Material ink;
-    bool clutch, hadSample, faulted;
+    readonly LimbGazeHint gazeHint = new();
+    readonly IdleLift[] lifts = { new(), new() };
+    IntPtr motionLimb;
+    bool hadSample, faulted;
+    uint previousBumpers, consumedBumpers, previousHands;
+    IntPtr climbingPawn;
     uint previousButtons;
     uint observedInputs;
     int scene = int.MinValue;
@@ -44,22 +49,40 @@ public sealed class ClimbingControls : MonoBehaviour
             observedInputs |= sample.Valid;
             ControlsPlugin.Logger.LogInfo($"OpenXR inputs active. Eye gaze={(observedInputs & 1) != 0}, grip={(observedInputs & 2) != 0}, aim={(observedInputs & 4) != 0}, gamepad={(observedInputs & 8) != 0}.");
         }
-        if (!hadSample) previousButtons = sample.Pressed; // tracking recovery requires a fresh press
-        hadSample = true;
-        var down = sample.Pressed & ~previousButtons;
+        uint hands = (sample.TryGrip(false, out _) ? 1u : 0u) | (sample.TryGrip(true, out _) ? 2u : 0u);
+        uint gripDown = hadSample ? sample.Pressed & ~previousButtons & hands & previousHands : 0;
+        uint bumperDown = hadSample ? sample.Buttons & ~previousBumpers : 0;
+        if ((previousHands & hands & 1) == 0) bumperDown &= ~Sample.BumperMask(false);
+        if ((previousHands & hands & 2) == 0) bumperDown &= ~Sample.BumperMask(true);
+        consumedBumpers &= sample.Buttons;
+        previousHands = hands;
         previousButtons = sample.Pressed;
+        previousBumpers = sample.Buttons;
+        hadSample = true;
+
         if (!origin && Time.unscaledTime >= nextLookup)
         {
             origin = GameObject.Find("CairnVR.TrackingOrigin")?.transform;
             nextLookup = Time.unscaledTime + .4f;
         }
-        if (!origin) { gamepad.Apply(sample, null); return; }
+        if (!origin) { EndClimb(); gamepad.Apply(sample, null); return; }
         var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle;
-        if (scene != activeScene) { scene = activeScene; ClearPins(); clutch = false; }
+        if (scene != activeScene) { scene = activeScene; ClearPins(); EndClimb(); }
         if (cue) cue!.SetActive(false);
+        bool scouting = IsScouting();
+        var pawn = PawnManager.IsReady ? PawnManager.Instance.ClimbingPawnController : null;
+        bool climbing = pawn != null && pawn.Enabled && pawn.pawnReady && !pawn.IsInActivePause && !scouting
+            && InputManager.IsReady && !InputManager.Instance.DisabledInputs && InputManager.Instance.climbingActionMap.enabled;
+        if (climbing && pawn.Pointer != climbingPawn)
+        {
+            EndClimb();
+            climbingPawn = pawn.Pointer;
+            gripDown = bumperDown = 0;
+        }
+        else if (!climbing) EndClimb();
         bool recenterChord = ControlsPlugin.Recenter switch
         {
-            ControlsPlugin.RecenterControl.BothGrips => sample.Pressed == 3,
+            ControlsPlugin.RecenterControl.BothGrips => !climbing && sample.Pressed == 3,
             ControlsPlugin.RecenterControl.BothStickClicks => (sample.Buttons & (3u << 8)) == (3u << 8),
             _ => false
         };
@@ -72,88 +95,195 @@ public sealed class ClimbingControls : MonoBehaviour
                 if (recenter == null && method != null) recenter = (Action)Delegate.CreateDelegate(typeof(Action), method);
                 recenter?.Invoke();
                 recenterStart = float.PositiveInfinity;
-                // Rebase the next hand sample after the camera recenters. A
-                // held selection grip must not keep suppressing the reach.
-                clutch = false;
+                EndClimb();
                 gamepad.Apply(sample, null);
                 return;
             }
         }
         else recenterStart = -1;
 
-        bool limbControls = ControlsPlugin.Gaze || ControlsPlugin.Reach || ControlsPlugin.Point;
-        if (!(limbControls || ControlsPlugin.Markers)) { gamepad.Apply(sample, null); return; }
-        bool scouting = IsScouting();
-        var pawn = limbControls && PawnManager.IsReady ? PawnManager.Instance.ClimbingPawnController : null;
-        bool climbing = pawn != null && pawn.Enabled && pawn.pawnReady && !pawn.IsInActivePause && !scouting
-            && InputManager.IsReady && !InputManager.Instance.DisabledInputs && InputManager.Instance.climbingActionMap.enabled;
-
-        if (ControlsPlugin.Markers && scouting && (sample.Valid & 4) != 0)
+        if (ControlsPlugin.Markers && scouting && sample.TryAim(ControlsPlugin.MarkerRight, out var aim))
         {
-            var ray = WorldRay(sample.Aim);
+            var ray = WorldRay(aim);
             if (Physics.Raycast(ray, out var hit, 300f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 PlaceCue(hit.point + .015f * hit.normal, ray.origin);
-                if ((down & 2) != 0) TogglePin(hit.point + .03f * hit.normal, ray.origin);
+                if ((gripDown & (ControlsPlugin.MarkerRight ? 2u : 1u)) != 0)
+                    TogglePin(hit.point + .03f * hit.normal, ray.origin);
             }
         }
-        if (ControlsPlugin.Gaze && climbing && (sample.Valid & 1) != 0 && pawn!.CanSelectLimb())
+
+        Vector2? motion = null;
+        if (climbing)
+        {
+            UpdateGaze(pawn, sample, bumperDown);
+            motion = UpdateReach(pawn, sample, gripDown);
+        }
+        // Keep a consumed press private until release, even if the gaze moves away.
+        sample.Buttons &= ~consumedBumpers;
+        gamepad.Apply(sample, motion);
+    }
+
+    [HideFromIl2Cpp]
+    void UpdateGaze(ClimbingV2PawnController pawn, Sample sample, uint bumperDown)
+    {
+        if (ControlsPlugin.Gaze && (sample.Valid & 1) != 0 && pawn.CanSelectLimb())
         {
             var ray = WorldRay(sample.Gaze);
             var limb = Candidate(pawn, ray);
             if (limb != null)
             {
-                PlaceCue(limb.CurrentIKTargetPosition, ray.origin);
-                if ((down & 1) != 0) pawn.StartReachingWithLimb(limb);
-            }
-        }
-
-        Vector2? motion = null;
-        var module = climbing ? pawn.CurrentModule : null;
-        // CAIRN reads the first movement in Idle to choose and free a limb.
-        // Keep the same grip origin when that movement switches it to Reaching.
-        bool canReach = (ControlsPlugin.Reach || ControlsPlugin.Point) && (sample.Valid & 2) != 0 && module != null &&
-            (module.Pointer == pawn.IdleModule?.Pointer || module.Pointer == pawn.ReachingModule?.Pointer);
-        if (!canReach || (sample.Pressed & 2) == 0) clutch = false;
-        else
-        {
-            if (!clutch)
-            {
-                var basis = Camera.main;
-                gripStart = sample.Grip.Position;
-                axisX = basis ? origin!.InverseTransformDirection(basis.transform.right).normalized : Vector3.right;
-                axisY = basis ? origin!.InverseTransformDirection(basis.transform.up).normalized : Vector3.up;
-                clutch = true;
-            }
-            if (ControlsPlugin.Point)
-            {
-                // Project the direction towards the visible surface into the same screen axes
-                // used by the gamepad. CAIRN still owns IK, hold acceptance, and contact.
-                motion = Vector2.zero;
-                var reaching = module.Pointer == pawn.ReachingModule.Pointer ? pawn.ReachingModule.ReachingLimb : null;
-                if ((sample.Valid & 4) != 0 && (reaching != null || pawn.bodyHandler != null))
+                bool right = limb.IsRight;
+                uint hand = right ? 2u : 1u;
+                if ((sample.FrameHands & hand) != 0 && sample.TryGrip(right, out _))
                 {
-                    var ray = WorldRay(sample.Aim);
-                    if (Physics.Raycast(ray, out var hit, 100f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
-                        && !hit.transform.IsChildOf(((Component)pawn).transform))
-                    {
-                        var offset = hit.point - (reaching != null ? reaching.CurrentIKTargetPosition : pawn.bodyHandler.BodyPosition);
-                        PlaceCue(hit.point + .01f * hit.normal, ray.origin);
-                        var horizontal = origin.TransformDirection(axisX);
-                        var vertical = origin.TransformDirection(axisY);
-                        var steer = new Vector2(Vector3.Dot(offset, horizontal), Vector3.Dot(offset, vertical));
-                        motion = steer.magnitude < .018f ? Vector2.zero : Vector2.ClampMagnitude(steer / .25f, 1);
-                    }
+                    PlaceCue(limb.CurrentIKTargetPosition, ray.origin);
+                    gazeHint.Update(limb, right, limb.IsHand, ray.origin);
+                    // Neither stock bumper action should open a menu over a targeted limb.
+                    consumedBumpers |= bumperDown & (Sample.BumperMask(false) | Sample.BumperMask(true));
+                    if ((bumperDown & Sample.BumperMask(right)) != 0)
+                        pawn.StartReachingWithLimb(limb);
+                    return;
                 }
             }
-            else
-            {
-                var delta = sample.Grip.Position - gripStart;
-                var stick = new Vector2(Vector3.Dot(delta, axisX), Vector3.Dot(delta, axisY)) / ControlsPlugin.MotionRange;
-                motion = stick.sqrMagnitude < .0025f ? Vector2.zero : Vector2.ClampMagnitude(stick, 1);
-            }
         }
-        gamepad.Apply(sample, motion);
+        gazeHint.Clear();
+    }
+
+    [HideFromIl2Cpp]
+    Vector2? UpdateReach(ClimbingV2PawnController pawn, Sample sample, uint gripDown)
+    {
+        var module = pawn.CurrentModule;
+        var reaching = pawn.ReachingModule;
+        bool useMotion = ControlsPlugin.Reach || ControlsPlugin.Point;
+        if (module != null && module.Pointer == pawn.IdleModule?.Pointer && useMotion)
+        {
+            motionLimb = IntPtr.Zero;
+            // A deliberate lift starts a same-side reach.
+            bool left = Lifted(sample, false);
+            bool right = Lifted(sample, true);
+            if (left != right && !pawn.FullManualSelectionMode && pawn.CanStartReaching() && pawn.CanSelectLimb())
+            {
+                var hand = right ? pawn.rightHand : pawn.leftHand;
+                var foot = right ? pawn.rightFoot : pawn.leftFoot;
+                var limb = LighterLimb(hand, foot);
+                if (limb != null) pawn.StartReachingWithLimb(limb);
+            }
+            return null;
+        }
+        lifts[0].Reset();
+        lifts[1].Reset();
+        var active = module != null && module.Pointer == reaching?.Pointer ? reaching.ReachingLimb : null;
+        if (active == null)
+        {
+            motionLimb = IntPtr.Zero;
+            return null;
+        }
+        bool ownerRight = active.IsRight;
+        uint owner = ownerRight ? 2u : 1u;
+        if (!sample.TryGrip(ownerRight, out var grip))
+        {
+            motionLimb = IntPtr.Zero;
+            return null;
+        }
+        if ((gripDown & owner) != 0)
+        {
+            reaching.TryGrabHold();
+            motionLimb = IntPtr.Zero;
+            return null;
+        }
+        if (!useMotion) return null;
+        if (motionLimb != active.Pointer)
+        {
+            var basis = Camera.main;
+            motionLimb = active.Pointer;
+            gripStart = grip.Position;
+            axisX = basis ? origin.InverseTransformDirection(basis.transform.right).normalized : Vector3.right;
+            axisY = basis ? origin.InverseTransformDirection(basis.transform.up).normalized : Vector3.up;
+        }
+        Vector2 stick;
+        if (ControlsPlugin.Point)
+        {
+            if (!sample.TryAim(ownerRight, out var aim)) return null;
+            var ray = WorldRay(aim);
+            if (!Physics.Raycast(ray, out var hit, 100f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
+                || hit.transform.IsChildOf(((Component)pawn).transform)) return null;
+            var offset = origin.InverseTransformDirection(hit.point - active.CurrentIKTargetPosition);
+            PlaceCue(hit.point + .01f * hit.normal, ray.origin);
+            stick = new Vector2(Vector3.Dot(offset, axisX), Vector3.Dot(offset, axisY)) / .25f;
+        }
+        else
+        {
+            var offset = grip.Position - gripStart;
+            stick = new Vector2(Vector3.Dot(offset, axisX), Vector3.Dot(offset, axisY)) / ControlsPlugin.MotionRange;
+        }
+        // Stick input remains available for fine adjustments and accessibility.
+        if (stick.sqrMagnitude < .0025f || new Vector2(sample.LX, sample.LY).sqrMagnitude > .04f) return null;
+        return Vector2.ClampMagnitude(stick, 1f);
+    }
+
+    [HideFromIl2Cpp]
+    bool Lifted(Sample sample, bool right)
+    {
+        int index = right ? 1 : 0;
+        if (!sample.TryGrip(right, out var grip))
+        {
+            lifts[index].Reset();
+            return false;
+        }
+        return lifts[index].MovedUp(grip.Position);
+    }
+
+    [HideFromIl2Cpp]
+    static ClimbingV2PawnLimb LighterLimb(ClimbingV2PawnLimb hand, ClimbingV2PawnLimb foot)
+    {
+        if (hand != null && hand.IsIdle) return hand;
+        if (foot != null && foot.IsIdle) return foot;
+        if (hand == null || !hand.IsHolding) return foot != null && foot.IsHolding ? foot : null;
+        if (foot == null || !foot.IsHolding) return hand;
+        return hand.Weight <= foot.Weight ? hand : foot;
+    }
+
+    sealed class IdleLift
+    {
+        Vector3 rest;
+        float stillSince;
+        bool sampled, ready;
+
+        public void Reset() { sampled = ready = false; }
+
+        public bool MovedUp(Vector3 position)
+        {
+            float now = Time.unscaledTime;
+            if (!sampled || (!ready && Vector3.Distance(rest, position) > .018f))
+            {
+                rest = position;
+                stillSince = now;
+                sampled = true;
+                return false;
+            }
+            if (!ready)
+            {
+                ready = now - stillSince >= .20f;
+                return false;
+            }
+            // Ignore slow drift and settle to a new baseline after downward motion.
+            float rise = position.y - rest.y;
+            rest = Vector3.Lerp(rest, position, 1f - Mathf.Exp(-Time.unscaledDeltaTime / .4f));
+            if (rise < .05f) return false;
+            Reset();
+            return true;
+        }
+    }
+
+    [HideFromIl2Cpp]
+    void EndClimb()
+    {
+        if (climbingPawn == IntPtr.Zero) return;
+        climbingPawn = motionLimb = IntPtr.Zero;
+        lifts[0].Reset();
+        lifts[1].Reset();
+        gazeHint.Clear();
     }
 
     [HideFromIl2Cpp]
@@ -249,12 +379,16 @@ public sealed class ClimbingControls : MonoBehaviour
     void ResetTracking()
     {
         if (!hadSample) return;
-        hadSample = false; clutch = false; previousButtons = 0; recenterStart = -1;
+        EndClimb();
+        hadSample = false;
+        previousButtons = previousBumpers = consumedBumpers = previousHands = 0;
+        recenterStart = -1;
         if (cue) cue!.SetActive(false);
         gamepad.Clear();
     }
     public void OnDestroy()
     {
+        gazeHint.Dispose();
         ControllerModels.Stop();
         gamepad.Dispose(); ClearPins();
         Application.runInBackground = ControlsPlugin.PreviouslyRanInBackground;

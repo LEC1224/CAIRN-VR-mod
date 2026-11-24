@@ -22,7 +22,7 @@ public static class ControllerModels
     static string modelDirectory;
     static Mesh sphere;
     static Material shell, cap, depthOnly;
-    static bool disabled, leftReaches;
+    static bool disabled;
     static int lastFrame = -1;
 
     // Anchors are in the same tracking origin as the eyes, even when recentered.
@@ -64,7 +64,6 @@ public static class ControllerModels
     {
         icons = new ControllerIcons();
         modelDirectory = FrameModel.FindModels();
-        leftReaches = Environment.GetEnvironmentVariable("CAIRNVR_LEFTHANDED") == "1";
         var rig = Type.GetType("CairnVR.CameraRig.StereoView, CairnVR.Camera", true);
         beforeEye = rig.GetEvent("BeforeEyeRender");
         afterEye = rig.GetEvent("AfterEyeRender");
@@ -94,10 +93,8 @@ public static class ControllerModels
                 bool valid = Tracking.TryRead(out var sample);
                 for (int i = 0; i < hands.Length; i++)
                 {
-                    bool dominant = (i == 0) == leftReaches;
-                    bool tracked = valid && (sample.Valid & (dominant ? 2u : 16u)) != 0;
                     var hand = hands[i];
-                    if (!tracked)
+                    if (!valid || !sample.TryGrip(i == 1, out var pose))
                     {
                         if (hand != null) hand.Tracked = false;
                         continue;
@@ -108,7 +105,6 @@ public static class ControllerModels
                         hand?.Dispose();
                         hands[i] = hand = new Hand(i, frame, eye.transform.parent);
                     }
-                    var pose = dominant ? sample.Grip : sample.OtherGrip;
                     hand.Root.SetLocalPositionAndRotation(pose.Position, pose.Rotation);
                     hand.Tracked = true;
                 }

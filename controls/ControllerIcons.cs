@@ -165,7 +165,7 @@ internal sealed class ControllerIcons
         backing?.Dispose();
     }
 
-    sealed class Glyph
+    internal sealed class Glyph
     {
         internal Sprite Sprite { get; private set; }
         Mesh mesh;

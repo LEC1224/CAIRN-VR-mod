@@ -163,12 +163,12 @@ internal sealed class ModeChooser : Form
         var vr = new Button { Text = "Play in VR", Location = new Point(193, 16), Size = new Size(168, 46), TabIndex = 1 };
         var movement = new GroupBox { Text = "Limb movement in VR", Location = new Point(18, 76), Size = new Size(343, 120), TabIndex = 2 };
         var stick = ReachMode(movement, "Thumbstick", 23, !options.Reach && !options.Point);
-        var reach = ReachMode(movement, "Move the controller while gripping", 53, options.Reach);
-        var point = ReachMode(movement, "Point at the rock while gripping", 83, options.Point);
+        var reach = ReachMode(movement, "Move the matching controller", 53, options.Reach);
+        var point = ReachMode(movement, "Point with the matching controller", 83, options.Point);
         var group = new GroupBox { Text = "VR controls", Location = new Point(18, 203), Size = new Size(343, 121), TabIndex = 3 };
         var gaze = Option(group, "Select limbs with eye tracking", 23, options.Gaze);
         var markers = Option(group, "Place route markers while scouting", 53, options.Markers);
-        var handed = Option(group, "Use left hand to reach and mark routes", 83, options.LeftHanded);
+        var handed = Option(group, "Mark routes with the left controller", 83, options.LeftHanded);
         choices = new Control[] { normal, vr, stick, reach, point, gaze, markers, handed };
         normal.Click += delegate { Vr = false; DialogResult = DialogResult.OK; };
         vr.Click += delegate { Vr = true; DialogResult = DialogResult.OK; };
