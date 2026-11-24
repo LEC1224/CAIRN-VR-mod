@@ -10,6 +10,7 @@ namespace CairnVR.Controls;
 
 internal sealed class ControllerIcons
 {
+    const float HoverHeight = .010f;
     // Paint for the physical caps, sampled from CAIRN's light gamepad prompts.
     // The floating letters themselves come from the game's input image manager.
     static readonly (string control, string part, string path, Color32 paint)[] faceButtons =
@@ -106,45 +107,20 @@ internal sealed class ControllerIcons
         }
     }
 
-    // Each hand has one pad. Touch-style fallback models split the face buttons
-    // into two diagonal pairs. Frame has a full diamond on each hand.
-    internal static bool PadOffset(string control, bool frame, out Vector2 offset)
+    internal void Draw(Dictionary<string, Transform> anchors)
     {
-        offset = control switch
-        {
-            "A" or "X" when !frame => new Vector2(-.55f, -.55f),
-            "B" or "Y" when !frame => new Vector2(.55f, .55f),
-            "Up" or "Y" => Vector2.up,
-            "Right" or "B" => Vector2.right,
-            "Down" or "A" => Vector2.down,
-            "Left" or "X" => Vector2.left,
-            _ => Vector2.zero
-        };
-        return offset != Vector2.zero;
-    }
-
-    internal void Draw(Dictionary<string, Transform> anchors, Transform hand, bool frame, Vector3 padCenter, Quaternion facing)
-    {
-        if (visible.Count == 0) return;
-        var forward = facing * Vector3.forward;
-        var right = Vector3.ProjectOnPlane(hand.right, forward);
-        right = right.sqrMagnitude > .01f ? right.normalized : facing * Vector3.right;
-        var up = Vector3.Cross(forward, right);
-        var lift = hand.up * .014f + facing * new Vector3(0, .032f, -.006f);
-        var center = hand.TransformPoint(padCenter) + lift;
         foreach (var entry in visible)
         {
             if (!anchors.TryGetValue(entry.Key, out var anchor)) continue;
-            var position = PadOffset(entry.Key, frame, out var offset)
-                ? center + (right * offset.x + up * offset.y) * .019f
-                : anchor.position + lift;
+            var surface = anchor.localToWorldMatrix;
             var (glyph, drawBacking) = entry.Value;
             if (drawBacking)
             {
-                backing.Draw(position + forward * .0004f, facing, .024f);
-                glyph.Draw(position, facing, .020f);
+                // Adjacent arms are 11.3 mm apart on the D-pad.
+                backing.Draw(surface, HoverHeight - .0003f, .0108f);
+                glyph.Draw(surface, HoverHeight, .0095f);
             }
-            else glyph.Draw(position, facing, .021f);
+            else glyph.Draw(surface, HoverHeight, .014f);
         }
     }
 
@@ -229,8 +205,8 @@ internal sealed class ControllerIcons
             material.mainTexture = texture;
         }
 
-        internal void Draw(Vector3 position, Quaternion facing, float size) =>
-            ControllerModels.SubmitMesh(mesh, Matrix4x4.TRS(position, facing, Vector3.one * size), material);
+        internal void Draw(Matrix4x4 surface, float height, float size) =>
+            ControllerModels.SubmitMesh(mesh, surface * Matrix4x4.TRS(Vector3.back * height, Quaternion.identity, Vector3.one * size), material);
 
         internal void Dispose()
         {

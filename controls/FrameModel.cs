@@ -16,7 +16,7 @@ internal sealed class FrameModel
 {
     internal Mesh Mesh;
     internal Texture2D Atlas;
-    internal readonly Dictionary<string, Vector3> Anchors = new();
+    internal readonly Dictionary<string, Pose> Anchors = new();
     internal Quaternion ModelRotation;
     internal Vector3 ModelOffset;
 
@@ -47,6 +47,32 @@ internal sealed class FrameModel
     static Vector3 Position(JsonElement coordinates) =>
         new(coordinates[0].GetSingle(), coordinates[1].GetSingle(), -coordinates[2].GetSingle());
 
+    static Quaternion Rotation(JsonElement xyz) =>
+        Quaternion.AngleAxis(xyz[2].GetSingle(), Vector3.forward)
+        * Quaternion.AngleAxis(-xyz[1].GetSingle(), Vector3.up)
+        * Quaternion.AngleAxis(-xyz[0].GetSingle(), Vector3.right);
+
+    static Pose ButtonSurface(string part, JsonElement component, JsonElement local, List<Vector3> vertices, int firstVertex)
+    {
+        var origin = Position(local.GetProperty("origin"));
+        var rotation = local.TryGetProperty("rotate_xyz", out var angles) ? Rotation(angles) : Quaternion.identity;
+        var normal = rotation * Vector3.forward;
+        var across = rotation * Vector3.right;
+        if (part == "dpad")
+        {
+            // The motion axes follow the arms of the cross. Its attachment
+            // origin sits just under the raised contact surface.
+            if (component.TryGetProperty("motion", out var motion) && motion.TryGetProperty("rotate_xyz", out var axes))
+                across = Rotation(axes) * Vector3.right;
+            float top = 0;
+            for (int i = firstVertex; i < vertices.Count; ++i)
+                top = Mathf.Max(top, Vector3.Dot(vertices[i] - origin, normal));
+            origin += normal * top;
+        }
+        // A Unity sprite reads upright from its -Z side.
+        return new Pose { position = origin, rotation = Quaternion.LookRotation(-normal, Vector3.Cross(across, normal)) };
+    }
+
     internal static FrameModel Load(string root, bool right)
     {
         var name = "frame_controller_" + (right ? "right" : "left");
@@ -54,9 +80,7 @@ internal sealed class FrameModel
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dir, name + ".json")));
         var components = manifest.RootElement.GetProperty("components");
         var grip = components.GetProperty("openxr_grip").GetProperty("component_local");
-        var r = grip.GetProperty("rotate_xyz");
-        var gripRotation = Quaternion.AngleAxis(r[2].GetSingle(), Vector3.forward)
-            * Quaternion.AngleAxis(-r[1].GetSingle(), Vector3.up) * Quaternion.AngleAxis(-r[0].GetSingle(), Vector3.right);
+        var gripRotation = Rotation(grip.GetProperty("rotate_xyz"));
         var model = new FrameModel { ModelRotation = Quaternion.Inverse(gripRotation) };
         model.ModelOffset = model.ModelRotation * -Position(grip.GetProperty("origin"));
         var vertices = new List<Vector3>();
@@ -72,10 +96,11 @@ internal sealed class FrameModel
                 string filename = path.GetString();
                 if (string.IsNullOrEmpty(filename) || Path.GetFileName(filename) != filename)
                     throw new InvalidDataException("Unexpected SteamVR render-model path.");
+                int firstVertex = vertices.Count;
                 AppendObj(Path.Combine(dir, filename), vertices, normals, uvs, triangles);
                 surfaces.Add((triangles.Count, ControllerIcons.FacePaint(part.Name)));
                 if (part.Value.TryGetProperty("component_local", out var local))
-                    model.Anchors[part.Name] = Position(local.GetProperty("origin"));
+                    model.Anchors[part.Name] = ButtonSurface(part.Name, part.Value, local, vertices, firstVertex);
             }
             model.Mesh = new Mesh { name = name, hideFlags = HideFlags.DontUnloadUnusedAsset };
             if (vertices.Count > 65535) model.Mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;

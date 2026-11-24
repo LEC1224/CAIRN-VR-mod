@@ -14,7 +14,6 @@ public static class ControllerModels
     static readonly bool[] attempted = new bool[2];
     static readonly Dictionary<string, Material> faceCaps = new();
     static ControllerIcons icons;
-    static Quaternion iconFacing;
     static EventInfo beforeEye, afterEye;
     public static event Action<Camera> AfterControllersRendered;
     static CommandBuffer drawCommands;
@@ -113,12 +112,7 @@ public static class ControllerModels
                     hand.Root.SetLocalPositionAndRotation(pose.Position, pose.Rotation);
                     hand.Tracked = true;
                 }
-                if (hands[0]?.Tracked == true || hands[1]?.Tracked == true)
-                {
-                    // Fix the layout for the stereo pair, including canted eye displays.
-                    iconFacing = eye.transform.rotation;
-                    icons.Refresh();
-                }
+                if (hands[0]?.Tracked == true || hands[1]?.Tracked == true) icons.Refresh();
             }
             QueueDraws(eye);
         }
@@ -149,7 +143,7 @@ public static class ControllerModels
                 if (hand != null && hand.Tracked && hand.Root) hand.Draw(depthPass: false);
             foreach (var hand in hands)
                 if (hand != null && hand.Tracked && hand.Root)
-                    icons.Draw(hand.Anchors, hand.Root, hand.Frame, hand.PadCenter, iconFacing);
+                    icons.Draw(hand.Anchors);
             AfterControllersRendered?.Invoke(eye);
         }
         finally { collecting = false; }
@@ -200,10 +194,10 @@ public static class ControllerModels
 
     sealed class Hand
     {
+        const float DpadArm = .008f;
         internal readonly Transform Root;
         internal readonly Dictionary<string, Transform> Anchors = new();
         internal readonly bool Frame;
-        internal readonly Vector3 PadCenter;
         internal bool Tracked;
         readonly List<(Mesh mesh, Matrix4x4 local, Material mat)> parts = new();
         readonly bool right;
@@ -226,31 +220,36 @@ public static class ControllerModels
                 textured = Surface(Color.white, model.Atlas);
                 var matrix = Matrix4x4.TRS(model.ModelOffset, model.ModelRotation, Vector3.one);
                 parts.Add((model.Mesh, matrix, textured));
-                foreach (var a in model.Anchors) AddAnchors(a.Key, matrix.MultiplyPoint3x4(a.Value));
+                foreach (var a in model.Anchors)
+                    AddAnchors(a.Key, matrix.MultiplyPoint3x4(a.Value.position), model.ModelRotation * a.Value.rotation);
+                if (right) AlignFacePad();
                 ControlsPlugin.Logger.LogInfo($"Loaded the Steam Frame {(right ? "right" : "left")} controller and its button anchors.");
             }
             else BuildFallback();
-            var center = Vector3.zero;
-            int count = 0;
-            foreach (var anchor in Anchors)
-                if (ControllerIcons.PadOffset(anchor.Key, frame, out _))
-                {
-                    center += anchor.Value.localPosition;
-                    count++;
-                }
-            if (count > 0) PadCenter = center / count;
         }
 
-        void Anchor(string name, Vector3 pos)
+        void AlignFacePad()
         {
-            var t = new GameObject(name).transform;
-            t.SetParent(Root, false);
-            t.localPosition = pos;
-            Anchors[name] = t;
+            if (!Anchors.TryGetValue("A", out var a) || !Anchors.TryGetValue("B", out var b)
+                || !Anchors.TryGetValue("X", out var x) || !Anchors.TryGetValue("Y", out var y)) return;
+            // The two diagonals of the physical diamond define its face plane.
+            var up = (y.localPosition - a.localPosition).normalized;
+            var across = (b.localPosition - x.localPosition).normalized;
+            var inward = Vector3.Cross(across, up);
+            if (inward.sqrMagnitude < .001f) return;
+            var facing = Quaternion.LookRotation(inward, up);
+            foreach (var button in new[] { a, b, x, y }) button.localRotation = facing;
         }
 
-        void AddAnchors(string part, Vector3 pos)
+        void AddAnchors(string part, Vector3 pos, Quaternion facing)
         {
+            void Anchor(string name, Vector3 position)
+            {
+                var t = new GameObject(name).transform;
+                t.SetParent(Root, false);
+                t.SetLocalPositionAndRotation(position, facing);
+                Anchors[name] = t;
+            }
             string prefix = right ? "Right" : "Left";
             switch (part)
             {
@@ -265,10 +264,10 @@ public static class ControllerModels
                 case "button_view": Anchor("View", pos); break;
                 case "button_menu": Anchor("Menu", pos); break;
                 case "dpad":
-                    Anchor("Up", pos + new Vector3(0, -.003f, .005f));
-                    Anchor("Down", pos + new Vector3(0, .003f, -.005f));
-                    Anchor("Left", pos + Vector3.left * .006f);
-                    Anchor("Right", pos + Vector3.right * .006f);
+                    Anchor("Up", pos + facing * Vector3.up * DpadArm);
+                    Anchor("Down", pos + facing * Vector3.down * DpadArm);
+                    Anchor("Left", pos + facing * Vector3.left * DpadArm);
+                    Anchor("Right", pos + facing * Vector3.right * DpadArm);
                     break;
             }
         }
@@ -286,7 +285,22 @@ public static class ControllerModels
                 if (paint.a != 0 && !faceCaps.TryGetValue(part, out material))
                     faceCaps[part] = material = Surface(paint);
                 Piece(pos, size, material);
-                AddAnchors(part, pos);
+                var facing = part switch
+                {
+                    "trigger" or "bumper" => Quaternion.LookRotation(Vector3.back, Vector3.up),
+                    "button_grip" => Quaternion.LookRotation(sign * Vector3.right, Vector3.up),
+                    _ => Quaternion.LookRotation(Vector3.down, Vector3.forward)
+                };
+                var normal = facing * Vector3.back;
+                float height = Vector3.Scale(normal, size).magnitude * .5f;
+                if (part == "dpad")
+                {
+                    // The fallback pad is an ellipsoid. Sample its surface at
+                    // the four arm centers, which sit below the central crown.
+                    float radiusFraction = DpadArm / (.5f * size.x);
+                    height *= Mathf.Sqrt(1f - radiusFraction * radiusFraction);
+                }
+                AddAnchors(part, pos + normal * height, facing);
             }
             Piece(new Vector3(0, -.012f, -.018f), new Vector3(.039f, .05f, .115f), shell, -18);
             Piece(new Vector3(0, .004f, .038f), new Vector3(.067f, .032f, .068f), shell);
