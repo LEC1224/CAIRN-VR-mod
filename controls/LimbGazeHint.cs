@@ -53,14 +53,15 @@ internal sealed class LimbGazeHint
         caption.Set(glyph.Sprite ? action : (right ? "[RB]  " : "[LB]  ") + action, null);
         var limb = target.CurrentIKTargetPosition;
         var facing = eye.transform.rotation;
-        float size = Mathf.Clamp(Vector3.Distance(limb, gazeOrigin), .5f, 8f);
-        var point = limb + facing * (new Vector3(.035f, .025f, -.018f) * size);
+        float size = 1.7f * Mathf.Clamp(Vector3.Distance(limb, gazeOrigin), .5f, 8f);
+        float side = right ? 1f : -1f;
+        var point = limb + facing * (new Vector3(.032f * side, .025f, -.018f) * size);
         if (glyph.Sprite)
         {
             glyph.Draw(Matrix4x4.TRS(point, facing, Vector3.one), 0, .032f * size);
-            point += facing * Vector3.right * (.022f * size);
+            point += facing * Vector3.right * (.022f * size * side);
         }
-        caption.Draw(point, facing, false, size);
+        caption.Draw(point, facing, !right, size);
     }
 
     internal void Dispose()
